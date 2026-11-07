@@ -1,1 +1,2978 @@
+loadstring([==[local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LP = Players.LocalPlayer
+local cam = workspace.CurrentCamera
+local UIS = game:GetService("UserInputService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local GroupService = game:GetService("GroupService")
 
+local function AA_InitFlag(name, def)
+	if _G[name] == nil then _G[name] = def end
+end
+AA_InitFlag("AA_Enabled", false)
+AA_InitFlag("AA_Strict", false)
+AA_InitFlag("AA_WallCheck", false)
+AA_InitFlag("AA_AdvancedRay", true)
+AA_InitFlag("AA_ExposedOnly", true)
+AA_InitFlag("AA_IgnoreTransparent", true)
+AA_InitFlag("AA_TransparentMaxDist", 60)
+AA_InitFlag("AA_IgnoreSpectator", true)
+AA_InitFlag("AA_ESPWallRoles", { Police = true, Criminal = true, Civilian = true, Spectator = true })
+AA_InitFlag("AA_ShieldPierce", true)
+AA_InitFlag("AA_ShieldPierceMode", "排除护盾")
+AA_InitFlag("AA_WallPierceDist", 0.5)
+AA_InitFlag("AA_RayFromMuzzle", true)
+AA_InitFlag("AA_Aggro", false)
+AA_InitFlag("AA_EnemyOnly", true)
+AA_InitFlag("AA_FOV", 360)
+AA_InitFlag("AA_MaxDist", 800)
+AA_InitFlag("AA_Stamina", true)
+AA_InitFlag("AA_ESPOn", true)
+AA_InitFlag("AA_ESPWall", true)
+AA_InitFlag("AA_ChamsMode", "Both")
+AA_InitFlag("AA_ChamsFill", 0.6)
+AA_InitFlag("AA_ChamsOutline", 0.05)
+AA_InitFlag("AA_AdminWatch", true)
+AA_InitFlag("AA_AdminAutoKick", true)
+AA_InitFlag("AA_AdminKickDelay", 5)
+AA_InitFlag("AA_AdminGroupId", 0)
+AA_InitFlag("AA_AdminMinRank", 0)
+AA_InitFlag("AA_AdminBlacklist", "")
+AA_InitFlag("AA_AdminCheckMarks", false)
+_G.AA_AdminState = _G.AA_AdminState or "权限检测待启动"
+_G.AA_AdminList = _G.AA_AdminList or "—"
+_G.AA_AdminGroupInfo = _G.AA_AdminGroupInfo or "—"
+_G.AA_AdminCountdown = _G.AA_AdminCountdown or 0
+AA_InitFlag("AA_MuzzleAim", true)
+AA_InitFlag("AA_AimMethod", "Raycast")
+AA_InitFlag("AA_RayHook", true)
+AA_InitFlag("AA_RayLen", 1000)
+AA_InitFlag("AA_RayLenTol", 0.2)
+AA_InitFlag("AA_RayLenFilter", false)
+AA_InitFlag("AA_RayCallerFilter", true)
+_G.AA_RunCount = (_G.AA_RunCount or 0) + 1
+AA_InitFlag("AA_IslandOn", true)
+AA_InitFlag("AA_ForceInclude", false)
+AA_InitFlag("AA_FOVCircle", true)
+AA_InitFlag("AA_ShowTarget", true)
+AA_InitFlag("AA_TIStyle", "Circle")
+AA_InitFlag("AA_TIColorMode", "单色")
+AA_InitFlag("AA_TIGreenOnExposed", true)
+AA_InitFlag("AA_TIBreath", true)
+AA_InitFlag("AA_TIRotate", false)
+AA_InitFlag("AA_TIShowText", true)
+_G.AA_TIColor1       = _G.AA_TIColor1       or Color3.fromRGB(255, 60, 60)
+_G.AA_TIColor2       = _G.AA_TIColor2       or Color3.fromRGB(60, 255, 120)
+_G.AA_TIColorSpeed   = _G.AA_TIColorSpeed   or 3
+_G.AA_TIRadius       = _G.AA_TIRadius       or 20
+_G.AA_TIBreathSpeed  = _G.AA_TIBreathSpeed  or 1
+_G.AA_TIBreathMin    = _G.AA_TIBreathMin    or 0.8
+_G.AA_TIBreathMax    = _G.AA_TIBreathMax    or 1.2
+_G.AA_TIRotSpeed     = _G.AA_TIRotSpeed     or 1
+_G.AA_TICrosshairLength = _G.AA_TICrosshairLength or 20
+_G.AA_TICrosshairGap    = _G.AA_TICrosshairGap    or 5
+_G.AA_TIThreeLineLength = _G.AA_TIThreeLineLength or 20
+_G.AA_TIThreeLineGap    = _G.AA_TIThreeLineGap    or 5
+_G.AA_FOVColor       = _G.AA_FOVColor       or Color3.fromRGB(120, 200, 255)
+_G.AA_FOVThickness   = _G.AA_FOVThickness   or 1.5
+_G.AA_FOVTransparency= _G.AA_FOVTransparency or 0.85
+_G.AA_Stats = { stamina = false, staminaPatched = 0, staminaSlots = 0,
+                fov = false, esp = 0, aimSet = 0,
+                rays = 0, exposed = 0, blocked = 0, restored = 0, tiDraw = 0, hookHits = 0,
+                shieldHits = 0, specPass = 0, shieldObjs = 0, shieldScan = 0,
+                tranPass = 0, diErr = 0 }
+
+local STAM_MAX = 1000000
+local origStamina = nil
+
+local function stamKeyClass(k)
+	local s = tostring(k):lower()
+	if not (s:find("stam") or s:find("energy")) then return nil end
+	if s:find("drain") or s:find("cost") or s:find("consume")
+		or s:find("deplet") or s:find("usage") then return "drain" end
+	if s:find("regen") or s:find("recover") or s:find("restore")
+		or s:find("replen") then return "regen" end
+	if s:find("max") or s:find("cap") or s:find("limit") then return "max" end
+	if s:find("min") or s:find("tostart") or s:find("threshold")
+		or s:find("required") then return "min" end
+	return nil
+end
+
+local function patchConfigTable(t, depth, counter)
+	if type(t) ~= "table" or depth > 3 then return counter end
+	for k, v in pairs(t) do
+		if counter > 200 then return counter end
+		local cls = stamKeyClass(k)
+		if cls and type(v) == "number" then
+			local nv = (cls == "drain" or cls == "min") and 0 or STAM_MAX
+			pcall(function() rawset(t, k, nv) end)
+			counter = counter + 1
+		elseif type(v) == "table" then
+			counter = patchConfigTable(v, depth + 1, counter)
+		end
+	end
+	return counter
+end
+
+local function getMovementConfig()
+	local ok, M = pcall(function()
+		local shared = game:GetService("ReplicatedStorage"):FindFirstChild("Shared")
+		local mod = shared and shared:FindFirstChild("MovementConfig")
+		return mod and require(mod)
+	end)
+	if ok and type(M) == "table" then return M end
+	return nil
+end
+
+local function applyInfiniteStamina()
+	local M = getMovementConfig()
+	if not M then _G.AA_Stats.stamina = false; return false end
+	local S = type(M.Sprint) == "table" and M.Sprint or M
+
+	if not origStamina and type(S) == "table" then
+		origStamina = { t = S,
+			DrainPerSecond = S.DrainPerSecond, StaminaMax = S.StaminaMax,
+			RegenPerSecond = S.RegenPerSecond, MinToStart = S.MinToStart }
+	end
+
+	pcall(function() rawset(S, "DrainPerSecond", 0) end)
+	pcall(function() rawset(S, "StaminaMax", STAM_MAX) end)
+	pcall(function() rawset(S, "RegenPerSecond", STAM_MAX) end)
+	pcall(function() rawset(S, "MinToStart", 0) end)
+	pcall(function() rawset(M, "DrainPerSecond", 0) end)
+	pcall(function() rawset(M, "StaminaMax", STAM_MAX) end)
+	pcall(function() rawset(M, "RegenPerSecond", STAM_MAX) end)
+	_G.AA_Stats.staminaPatched = patchConfigTable(M, 0, 0)
+	_G.AA_Stats.stamina = true
+	return true
+end
+
+local function restoreStaminaConfig()
+	if not origStamina then return end
+	local t = origStamina.t
+	for _, k in ipairs({ "DrainPerSecond", "StaminaMax", "RegenPerSecond", "MinToStart" }) do
+		if origStamina[k] ~= nil then
+			pcall(function() rawset(t, k, origStamina[k]) end)
+		end
+	end
+	origStamina = nil
+end
+
+local staminaSlots = {}
+local function looksLikeStamina(name)
+	local s = tostring(name):lower()
+	return s:find("stam") ~= nil or s:find("energy") ~= nil
+end
+local function scanStaminaSlots()
+	local found = {}
+	local roots = { LP }
+	local ch = LP.Character
+	if ch then
+		table.insert(roots, ch)
+		local hum = ch:FindFirstChildOfClass("Humanoid")
+		if hum then table.insert(roots, hum) end
+	end
+	for _, root in ipairs(roots) do
+		if root then
+			pcall(function()
+				for k, v in pairs(root:GetAttributes()) do
+					if type(v) == "number" and looksLikeStamina(k) then
+						table.insert(found, { obj = root, kind = "attr", key = k, max = math.max(v, STAM_MAX) })
+					end
+				end
+			end)
+			pcall(function()
+				for _, c in ipairs(root:GetChildren()) do
+					if (c:IsA("NumberValue") or c:IsA("IntValue")) and looksLikeStamina(c.Name) then
+						table.insert(found, { obj = c, kind = "value", key = "Value", max = math.max(c.Value, STAM_MAX) })
+					end
+				end
+			end)
+		end
+	end
+	return found
+end
+
+if _G.AA_Stamina then pcall(applyInfiniteStamina) end
+staminaSlots = scanStaminaSlots()
+_G.AA_Stats.staminaSlots = #staminaSlots
+
+task.spawn(function()
+	local cfgClock, scanClock = 0, 0
+	while true do
+		local dt = task.wait(0.05)
+		if not _G.AA_Stamina then cfgClock, scanClock = 0, 0; continue end
+		for _, s in ipairs(staminaSlots) do
+			pcall(function()
+				if s.kind == "attr" then
+					local cur = s.obj:GetAttribute(s.key)
+					if type(cur) == "number" and cur < s.max then s.obj:SetAttribute(s.key, s.max) end
+				else
+					if s.obj.Value < s.max then s.obj.Value = s.max end
+				end
+			end)
+		end
+		cfgClock = cfgClock + dt
+		if cfgClock >= 0.25 then cfgClock = 0; pcall(applyInfiniteStamina) end
+		scanClock = scanClock + dt
+		if scanClock >= 2 then
+			scanClock = 0
+			local f = scanStaminaSlots()
+			if #f > 0 then staminaSlots = f end
+			_G.AA_Stats.staminaSlots = #staminaSlots
+			pcall(applyInfiniteStamina)
+		end
+	end
+end)
+
+local function getRole(p) return p:GetAttribute("Role") end
+
+local function hostileLevel(myRole, otherRole)
+	if otherRole == "Spectator" then return false end
+	if myRole == "Police" and otherRole == "Criminal" then return true end
+	if myRole == "Criminal" and otherRole == "Police" then return true end
+	if _G.AA_EnemyOnly then return false end
+	if otherRole == "Civilian" then return "maybe" end
+	if otherRole == nil then return _G.AA_Strict and false or "maybe" end
+	if _G.AA_Aggro then return "maybe" end
+	return false
+end
+
+local function aimPoint(ch)
+	return ch:FindFirstChild("Head")
+		or ch:FindFirstChild("HumanoidRootPart")
+		or ch.PrimaryPart
+end
+
+local muzzleState = nil
+
+local muzzleScanClock = 0
+local muzzleCached = nil
+local function deepMuzzle(root)
+    if not root then return nil end
+    local ok, list = pcall(function() return root:GetDescendants() end)
+    if not ok or not list then return nil end
+    local fb = nil
+    for _, v in ipairs(list) do
+        local nm = (v.Name or ""):lower()
+        if nm:find("muzzle") or nm:find("firepoint") or nm:find("bulletpoint") then
+            if v:IsA("Attachment") or v:IsA("BasePart") then return v end
+        end
+        if v:IsA("Attachment") and not fb then fb = v end
+    end
+    return fb
+end
+local function scanCamModels(c)
+    if not c then return nil end
+    local ok, kids = pcall(function() return c:GetChildren() end)
+    if not ok or not kids then return nil end
+    for _, v in ipairs(kids) do
+        if v:IsA("Model") then
+            local m = v:FindFirstChild("Muzzle")
+            if not m then
+                local h = v:FindFirstChild("Handle")
+                if h then m = h:FindFirstChild("Muzzle") end
+            end
+            if m then return m end
+        end
+    end
+    return nil
+end
+local function getGunMuzzle()
+    local ch = LP.Character
+    if ch then
+        for _, t in ipairs(ch:GetChildren()) do
+            if t:IsA("Tool") then
+                local h = t:FindFirstChild("Handle")
+                local m = (h and h:FindFirstChild("Muzzle")) or t:FindFirstChild("Muzzle")
+                if m then return m end
+            end
+        end
+    end
+    local liveCam = workspace.CurrentCamera
+    local m1 = scanCamModels(cam) or scanCamModels(liveCam)
+    if m1 then return m1 end
+    local now = os.clock()
+    if muzzleCached and muzzleCached.Parent and (now - muzzleScanClock) < 1 then return muzzleCached end
+    muzzleScanClock = now
+    muzzleCached = deepMuzzle(ch) or deepMuzzle(cam)
+    if not muzzleCached and liveCam and liveCam ~= cam then muzzleCached = deepMuzzle(liveCam) end
+    return muzzleCached
+end
+
+local function ensureMuzzleState()
+    local m = getGunMuzzle()
+    _G.AA_MuzzleFound = m ~= nil
+    if not m then return nil end
+    if muzzleState and muzzleState.muzzle == m and m.Parent then return muzzleState end
+    if muzzleState and muzzleState.aimed then
+        pcall(function()
+            if muzzleState.muzzle.Parent then muzzleState.muzzle.CFrame = muzzleState.orig end
+        end)
+    end
+    local ok, cf = pcall(function() return m.CFrame end)
+    if not ok then return nil end
+    muzzleState = { muzzle = m, orig = cf, isAtt = m:IsA("Attachment"), aimed = false }
+    return muzzleState
+end
+
+local function muzzleWorldPos()
+    local s = ensureMuzzleState()
+    if not s then return nil end
+    local ok, pos = pcall(function()
+        if s.isAtt then
+            local p = s.muzzle.Parent
+            if p and p.CFrame then return p.CFrame * s.orig.Position end
+            return s.muzzle.WorldCFrame.Position
+        end
+        return s.muzzle.CFrame.Position
+    end)
+    if ok and pos then return pos end
+    return nil
+end
+
+local function restoreMuzzle()
+    if not muzzleState or not muzzleState.aimed then return end
+    pcall(function()
+        if muzzleState.muzzle.Parent then muzzleState.muzzle.CFrame = muzzleState.orig end
+    end)
+    muzzleState.aimed = false
+    _G.AA_Stats.restored = _G.AA_Stats.restored + 1
+end
+
+local function aimMuzzleAt(headPos)
+    local s = ensureMuzzleState()
+    if not s then return false end
+    local m = s.muzzle
+    local got, origWorld = pcall(function()
+        if s.isAtt then
+            local p = m.Parent
+            local pc = p and p.CFrame
+            if pc then return pc * s.orig end
+            return m.WorldCFrame
+        end
+        return s.orig
+    end)
+    if not got or not origWorld then return false end
+    local want = CFrame.lookAt(origWorld.Position, headPos, origWorld.UpVector)
+    local ok = pcall(function()
+        if s.isAtt then
+            local p = m.Parent
+            local pc = p and p.CFrame
+            if pc then
+                m.CFrame = pc:ToObjectSpace(want)
+            else
+                m.CFrame = m.WorldCFrame:ToObjectSpace(want) * m.CFrame
+            end
+        else
+            m.CFrame = want
+        end
+    end)
+    if ok then
+        s.aimed = true
+        _G.AA_Stats.aimSet = _G.AA_Stats.aimSet + 1
+    end
+    return ok
+end
+
+local SHIELD_WORDS = { "shield", "barrier", "bubble", "dome", "aura", "forcefield", "protect", "ward" }
+local function isShieldLike(inst)
+    if not inst then return false end
+    local ok, res = pcall(function()
+        if inst:IsA("ForceField") then return true end
+        local nm = (inst.Name or ""):lower()
+        for _, w in ipairs(SHIELD_WORDS) do
+            if nm:find(w, 1, true) then return true end
+        end
+        if inst:GetAttribute("IsShield") or inst:GetAttribute("Shield") or inst:GetAttribute("ForceField") then return true end
+        local m = inst:FindFirstAncestorOfClass("Model")
+        if m and m ~= LP.Character then
+            local mn = (m.Name or ""):lower()
+            for _, w in ipairs(SHIELD_WORDS) do
+                if mn:find(w, 1, true) then return true end
+            end
+            if m:GetAttribute("IsShield") or m:GetAttribute("Shield") then return true end
+        end
+        if inst:IsA("BasePart") then
+            if inst.Transparency >= 0.6 and not inst.CanCollide then return true end
+            if (inst.Material == Enum.Material.ForceField or inst.Material == Enum.Material.Neon) and inst.Transparency >= 0.35 then return true end
+        end
+        return false
+    end)
+    return ok and res == true
+end
+
+local function isSpectatorPart(inst)
+    if not _G.AA_IgnoreSpectator or not inst then return false end
+    local ok, res = pcall(function()
+        local m = inst:FindFirstAncestorOfClass("Model")
+        if not m then return false end
+        local pl = Players:GetPlayerFromCharacter(m)
+        if pl and getRole(pl) == "Spectator" then return true end
+        return m:GetAttribute("Role") == "Spectator"
+    end)
+    return ok and res == true
+end
+
+local function setExclude(rp)
+    if not pcall(function() rp.FilterType = Enum.RaycastFilterType.Exclude end) then
+        pcall(function() rp.FilterType = Enum.RaycastFilterType.Blacklist end)
+    end
+end
+
+local function collectShieldIgnores()
+    local out, seen = {}, {}
+    local function add(x)
+        if x and not seen[x] and #out < 200 then seen[x] = true; table.insert(out, x) end
+    end
+    local function consider(x)
+        if not x then return end
+        if isShieldLike(x) then add(x) return end
+        pcall(function()
+            if x:IsA("BasePart") and x.Transparency >= 0.5 then add(x) end
+        end)
+    end
+    pcall(function()
+        for _, top in ipairs(workspace:GetChildren()) do consider(top) end
+    end)
+    pcall(function()
+        for _, p in ipairs(Players:GetPlayers()) do
+            local ch = p.Character
+            if ch then
+                local okK, kids = pcall(function() return ch:GetChildren() end)
+                if okK and type(kids) == "table" then
+                    for _, k in ipairs(kids) do consider(k) end
+                end
+            end
+        end
+    end)
+    pcall(function()
+        local budget = 400
+        for _, top in ipairs(workspace:GetChildren()) do
+            local okK, kids = pcall(function() return top:GetChildren() end)
+            if okK and type(kids) == "table" then
+                for _, k in ipairs(kids) do
+                    consider(k)
+                    budget = budget - 1
+                    if budget <= 0 then break end
+                end
+            end
+            if budget <= 0 then break end
+        end
+    end)
+    return out
+end
+
+local function aimPartNow()
+    local t = _G.AA_Target
+    if not t or not t.head then return nil end
+    local h = t.head
+    if h.Parent and h:IsA("BasePart") then return h end
+    return nil
+end
+
+_G.AA_LastRayHit = 0
+local hookReady = false
+local oldNamecall = nil
+pcall(function()
+    if type(hookmetamethod) ~= "function" then return end
+    if type(getnamecallmethod) ~= "function" then return end
+    local nc = type(newcclosure) == "function" and newcclosure or function(f) return f end
+    local hasCaller = type(checkcaller) == "function"
+    local hasScript = type(getcallingscript) == "function"
+    oldNamecall = hookmetamethod(game, "__namecall", nc(function(...)
+        local self = ...
+        local okM, method = pcall(getnamecallmethod)
+        if not okM or not oldNamecall then return oldNamecall(...) end
+        if method ~= "Raycast" or self ~= workspace then return oldNamecall(...) end
+        if _G.AA_InDetectRay then return oldNamecall(...) end
+        if not _G.AA_Enabled or not _G.AA_MuzzleAim or not _G.AA_RayHook then
+            return oldNamecall(...)
+        end
+        if hasCaller and _G.AA_RayCallerFilter then
+            local okC, isSelf = pcall(checkcaller)
+            if okC and isSelf then return oldNamecall(...) end
+        end
+        if hasScript then
+            local okS, cs = pcall(getcallingscript)
+            if okS and cs and (cs.Name == "ControlScript" or cs.Name == "ControlModule") then
+                return oldNamecall(...)
+            end
+        end
+        if _G.AA_AimMethod == "Muzzle" then return oldNamecall(...) end
+        local part = aimPartNow()
+        if not part then return oldNamecall(...) end
+        local args = { select(2, ...) }
+        local origin, dir = args[1], args[2]
+        local okMag, mag = pcall(function() return dir.Magnitude end)
+        if not okMag or type(mag) ~= "number" or mag <= 0 then return oldNamecall(...) end
+        if _G.AA_RayLenFilter then
+            local base = _G.AA_RayLen
+            local tol = _G.AA_RayLenTol
+            if mag < base * (1 - tol) or mag > base * (1 + tol) then
+                return oldNamecall(...)
+            end
+        end
+        local okDir, newDir = pcall(function()
+            return CFrame.lookAt(origin, part.Position).LookVector * mag
+        end)
+        if not okDir or not newDir then return oldNamecall(...) end
+        args[2] = newDir
+        if _G.AA_ShieldPierce and not _G.AA_ForceInclude then
+            local okSh, o2, d2 = pcall(function()
+                local base = args[3]
+                local mode = _G.AA_ShieldPierceMode or "排除护盾"
+                local o, d = args[1], newDir
+                if mode == "起点传送" then
+                    local u = d.Unit
+                    o = part.Position - u * 3
+                    d = (part.Position - o).Unit * mag
+                end
+                local list, seen = {}, {}
+                local function addIg(x)
+                    if x and not seen[x] then seen[x] = true; table.insert(list, x) end
+                end
+                local okBase, baseList = pcall(function()
+                    if base and base.FilterDescendantsInstances then return base.FilterDescendantsInstances end
+                end)
+                if okBase and type(baseList) == "table" then
+                    for _, x in ipairs(baseList) do addIg(x) end
+                end
+                if LP.Character then addIg(LP.Character) end
+                if type(_G.AA_ShieldIgnores) == "table" then
+                    for _, x in ipairs(_G.AA_ShieldIgnores) do addIg(x) end
+                end
+                local okSet = false
+                if base then
+                    okSet = pcall(function()
+                        setExclude(base)
+                        base.FilterDescendantsInstances = list
+                    end)
+                end
+                if not okSet then
+                    local rp = RaycastParams.new()
+                    setExclude(rp)
+                    rp.FilterDescendantsInstances = list
+                    args[3] = rp
+                end
+                _G.AA_Stats.shieldHits = (_G.AA_Stats.shieldHits or 0) + 1
+                return o, d
+            end)
+            if okSh and o2 and d2 then args[1], args[2] = o2, d2 end
+        end
+        if _G.AA_ForceInclude then
+            local okP, p = pcall(function()
+                local rp = RaycastParams.new()
+                rp.FilterType = Enum.RaycastFilterType.Include
+                rp.FilterDescendantsInstances = { part.Parent }
+                return rp
+            end)
+            if okP and p then args[3] = p end
+        end
+        _G.AA_Stats.hookHits = (_G.AA_Stats.hookHits or 0) + 1
+        _G.AA_LastRayHit = os.clock()
+        return oldNamecall(self, args[1], args[2], args[3])
+    end))
+    hookReady = oldNamecall ~= nil
+end)
+_G.AA_HookReady = hookReady
+
+local function rayVerified()
+    if not hookReady or not _G.AA_RayHook then return false end
+    if _G.AA_AimMethod == "Muzzle" then return false end
+    local last = tonumber(_G.AA_LastRayHit) or 0
+    if last <= 0 then return false end
+    return (os.clock() - last) < 20
+end
+_G.AA_RayVerified = rayVerified
+
+local function useRayHook()
+    return (_G.AA_AimMethod ~= "Muzzle") and _G.AA_RayHook and hookReady
+end
+
+local rayCache = {}
+
+local function isExposed(part, targetChar)
+    if not _G.AA_AdvancedRay then return true end
+    if not part or not targetChar then return false end
+    local now = os.clock()
+    local c = rayCache[targetChar]
+    if c and (now - c.t) < 0.12 then return c.ok end
+
+    local origin
+    if _G.AA_RayFromMuzzle then origin = muzzleWorldPos() end
+    if not origin and LP.Character then
+        local h = LP.Character:FindFirstChild("Head")
+        if h then origin = h.Position end
+    end
+    if not origin and cam then origin = cam.CFrame.Position end
+    if not origin then return false end
+
+    local dir = part.Position - origin
+    local dist = dir.Magnitude
+    local pierce = _G.AA_WallPierceDist or 0.5
+    local myDist = dist
+    pcall(function()
+        local ch = LP.Character
+        local myHRP = ch and ch:FindFirstChild("HumanoidRootPart")
+        local tHRP = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+        local a = myHRP and myHRP.Position or origin
+        local b = tHRP and tHRP.Position or part.Position
+        local dx, dz = a.X - b.X, a.Z - b.Z
+        myDist = math.sqrt(dx * dx + dz * dz)
+    end)
+    local exposed = (myDist <= pierce) or (dist < 0.5)
+    if not exposed then
+        local unit = dir / dist
+        local params = RaycastParams.new()
+        if not pcall(function() params.FilterType = Enum.RaycastFilterType.Exclude end) then
+            pcall(function() params.FilterType = Enum.RaycastFilterType.Blacklist end)
+        end
+        local ignore = {}
+        if LP.Character then table.insert(ignore, LP.Character) end
+        table.insert(ignore, targetChar)
+        if cam then table.insert(ignore, cam) end
+        local strict = _G.AA_WallCheck
+        local cur, left = origin, dist
+        for _ = 1, 10 do
+            params.FilterDescendantsInstances = ignore
+            local r
+            local okRay = pcall(function()
+                _G.AA_InDetectRay = true
+                r = workspace:Raycast(cur, unit * left, params)
+                _G.AA_InDetectRay = nil
+            end)
+            if not okRay then _G.AA_InDetectRay = nil r = nil end
+            _G.AA_Stats.rays = _G.AA_Stats.rays + 1
+            if not r or not r.Instance then exposed = true; break end
+            local hit = r.Instance
+            if hit:IsDescendantOf(targetChar) then exposed = true; break end
+            local transparent = false
+            pcall(function() transparent = (hit.Transparency >= 0.5) or (hit.CanCollide == false) end)
+            local leftAfter = (part.Position - r.Position).Magnitude
+            local passSpec = isSpectatorPart(hit)
+            local maxTran = _G.AA_TransparentMaxDist or 60
+            local passTran = (not strict) and _G.AA_IgnoreTransparent and transparent and (leftAfter <= maxTran)
+            if passSpec then
+                _G.AA_Stats.specPass = (_G.AA_Stats.specPass or 0) + 1
+            end
+            if passTran then
+                _G.AA_Stats.tranPass = (_G.AA_Stats.tranPass or 0) + 1
+            end
+            if passSpec or passTran then
+                table.insert(ignore, hit)
+                cur = r.Position + unit * 0.05
+                left = (part.Position - cur).Magnitude
+                if left <= 0.1 then exposed = true; break end
+            else
+                exposed = false; break
+            end
+        end
+    end
+
+    if exposed then _G.AA_Stats.exposed = _G.AA_Stats.exposed + 1
+    else _G.AA_Stats.blocked = _G.AA_Stats.blocked + 1 end
+    rayCache[targetChar] = { ok = exposed, t = now }
+    if _G.AA_Stats.rays % 200 == 0 then
+        local n = 0
+        for k, v in pairs(rayCache) do
+            if now - v.t > 3 then rayCache[k] = nil else n = n + 1 end
+        end
+        if n > 120 then rayCache = {} end
+    end
+    return exposed
+end
+
+local NPC_cache = {}
+local function refreshNPC()
+	local list = {}
+	local playerChars = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p.Character then playerChars[p.Character] = true end
+	end
+	local seen = {}
+	local function tryModel(m)
+		if not (m:IsA("Model") and not seen[m] and m ~= LP.Character and not playerChars[m]) then return end
+		seen[m] = true
+		local hum = m:FindFirstChildOfClass("Humanoid")
+		if not hum then return end
+		local nm = (m.Name or ""):lower()
+		if nm:find("corpse") or nm:find("dummy") or nm:find("training") or nm:find("ragdoll") then return end
+		table.insert(list, { char = m, role = m:GetAttribute("Role") })
+	end
+	pcall(function()
+		for _, m in ipairs(workspace:GetChildren()) do
+			tryModel(m)
+			if m:IsA("Folder") then
+				for _, c in ipairs(m:GetChildren()) do
+					if c:IsA("Model") then tryModel(c) end
+				end
+			end
+		end
+	end)
+	NPC_cache = list
+end
+refreshNPC()
+_G.AA_NPCLoop = task.spawn(function()
+	while true do
+		task.wait(3)
+		refreshNPC()
+	end
+end)
+
+local function collectCandidates(myRole, myPos)
+	local cands = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LP and p.Character then
+			table.insert(cands, { char = p.Character, role = getRole(p) })
+		end
+	end
+	for _, e in ipairs(NPC_cache) do table.insert(cands, e) end
+
+	local filtered = {}
+	for _, c in ipairs(cands) do
+		local ch = c.char
+		if ch == LP.Character then continue end
+		local role = c.role
+		if role == "Spectator" then continue end
+		local lvl = hostileLevel(myRole, role)
+		if lvl == false then continue end
+		local hum = ch:FindFirstChildOfClass("Humanoid")
+		if not hum or hum.Health <= 0 then continue end
+		local ap = aimPoint(ch)
+		if not ap then continue end
+		local d = (ap.Position - myPos).Magnitude
+		if d > _G.AA_MaxDist then continue end
+		table.insert(filtered, { head = ap, char = ch, role = role, dist = d, sure = (lvl == true) })
+	end
+	return filtered
+end
+
+local function fovRadiusPx()
+	local c = workspace.CurrentCamera or cam
+	if not c then return nil, nil, nil end
+	local ok, vp = pcall(function() return c.ViewportSize end)
+	if not ok or not vp then return nil, nil, nil end
+	local pxPerDeg = vp.Y / math.max(1, c.FieldOfView)
+	return (_G.AA_FOV / 2) * pxPerDeg, vp, c
+end
+
+local function screenInFOV(worldPos)
+	if _G.AA_FOV >= 359 then return true end
+	local r, vp, c = fovRadiusPx()
+	if not r or not vp or not c then return true end
+	local ok, v = pcall(function() return c:WorldToViewportPoint(worldPos) end)
+	if not ok or not v or v.Z <= 0 then return false end
+	local dx, dy = v.X - vp.X / 2, v.Y - vp.Y / 2
+	return (dx * dx + dy * dy) <= (r * r)
+end
+
+local function findTarget()
+	local myChar = LP.Character
+	if not myChar then return nil end
+	local myRole = getRole(LP)
+	if myRole == nil or myRole == "Spectator" then return nil end
+	local hrp = myChar:FindFirstChild("HumanoidRootPart")
+	if not hrp then return nil end
+	local myPos = hrp.Position
+	local okCC, filtered = pcall(collectCandidates, myRole, myPos)
+	if not okCC or type(filtered) ~= "table" then return nil end
+	if not cam then return nil end
+    local best
+    for _, c in ipairs(filtered) do
+        if not c or not c.head then continue end
+        local okF, inF = pcall(screenInFOV, c.head.Position)
+        if not okF or not inF then continue end
+        if _G.AA_ExposedOnly then
+            local okE, ex = pcall(isExposed, c.head, c.char)
+            if not okE or not ex then continue end
+        end
+        if not best then
+            best = c
+        elseif c.sure and not best.sure then
+            best = c
+        elseif c.sure == best.sure and c.dist < best.dist then
+            best = c
+        end
+    end
+	return best
+end
+
+local function findDisplayTarget()
+	local myChar = LP.Character
+	if not myChar then return nil end
+	local myRole = getRole(LP)
+	if myRole == nil or myRole == "Spectator" then return nil end
+	local hrp = myChar:FindFirstChild("HumanoidRootPart")
+	if not hrp or not cam then return nil end
+	local ok, cands = pcall(collectCandidates, myRole, hrp.Position)
+	if not ok or type(cands) ~= "table" then return nil end
+	local best
+	for _, c in ipairs(cands) do
+		if not screenInFOV(c.head.Position) then continue end
+		local okE, exposed = pcall(isExposed, c.head, c.char)
+		if okE and not exposed then continue end
+		if not best or c.dist < best.dist then best = c end
+	end
+	return best
+end
+
+pcall(function()
+    if _G.AA_RS then _G.AA_RS:Disconnect() end
+    if _G.AA_FOVObj then pcall(function() _G.AA_FOVObj:Remove() end) end
+    if _G.AA_TIHighlight then pcall(function() _G.AA_TIHighlight:Destroy() end) end
+    local old = _G.AA_TIObjects
+    if old then
+        for _, o in ipairs(old) do
+            pcall(function() o.Visible = false end)
+            pcall(function() o:Remove() end)
+        end
+    end
+end)
+
+local hasDraw = false
+local fovCircle
+pcall(function()
+	if Drawing and Drawing.new then
+		fovCircle = Drawing.new("Circle")
+		fovCircle.Visible = false
+		fovCircle.Color = _G.AA_FOVColor
+		fovCircle.Thickness = _G.AA_FOVThickness
+		fovCircle.Transparency = _G.AA_FOVTransparency
+		fovCircle.NumSides = 90
+		fovCircle.Filled = false
+		hasDraw = true
+	end
+end)
+_G.AA_Draw = hasDraw
+_G.AA_FOVObj = fovCircle
+
+local hasTI = false
+local tiCircle, tiLines, tiText
+local tiHighlight, tiHLReady = nil, false
+pcall(function()
+	tiHighlight = Instance.new("Highlight")
+	tiHighlight.FillTransparency = 1
+	tiHighlight.OutlineTransparency = 0
+	tiHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	tiHighlight.Adornee = nil
+	tiHighlight.Parent = workspace
+	tiHLReady = true
+end)
+_G.AA_TIHighlight = tiHighlight
+pcall(function()
+	if not (Drawing and Drawing.new) then return end
+	tiCircle = Drawing.new("Circle")
+	tiCircle.Visible = false
+	tiCircle.ZIndex = 1000
+	tiCircle.Thickness = 2
+	tiCircle.Filled = false
+	tiCircle.NumSides = 60
+	tiLines = {}
+	for i = 1, 5 do
+		local ln = Drawing.new("Line")
+		ln.Visible = false
+		ln.ZIndex = 1000
+		ln.Thickness = 2
+		table.insert(tiLines, ln)
+	end
+	pcall(function()
+		tiText = Drawing.new("Text")
+		tiText.Visible = false
+		tiText.ZIndex = 1000
+		tiText.Size = 13
+		tiText.Center = true
+		tiText.Outline = true
+	end)
+	hasTI = true
+end)
+_G.AA_TIReady = hasTI
+_G.AA_TIHLReady = tiHLReady
+_G.AA_TIObjects = {}
+if tiCircle then table.insert(_G.AA_TIObjects, tiCircle) end
+for _, ln in ipairs(tiLines or {}) do table.insert(_G.AA_TIObjects, ln) end
+if tiText then table.insert(_G.AA_TIObjects, tiText) end
+
+local function hideTargetIndicator()
+	if tiHighlight then pcall(function() tiHighlight.Adornee = nil end) end
+	if not hasTI then return end
+	pcall(function()
+		tiCircle.Visible = false
+		for _, ln in ipairs(tiLines) do ln.Visible = false end
+		if tiText then tiText.Visible = false end
+	end)
+end
+
+local function tiPolygon(center, radius, sides, rot)
+	local pts = {}
+	for i = 1, sides do
+		local a = (i - 1) * (2 * math.pi / sides) - (math.pi / 2) + rot
+		table.insert(pts, Vector2.new(
+			center.X + radius * math.cos(a),
+			center.Y + radius * math.sin(a)))
+	end
+	return pts
+end
+
+local function tiColor()
+	local mode, sp = _G.AA_TIColorMode, _G.AA_TIColorSpeed or 3
+	if mode == "彩虹" then
+		return Color3.fromHSV((tick() * sp * 0.1) % 1, 1, 1)
+	elseif mode == "渐变" then
+		return _G.AA_TIColor1:Lerp(_G.AA_TIColor2, (math.sin(tick() * sp) + 1) / 2)
+	end
+	return _G.AA_TIColor1
+end
+
+local function drawTargetIndicator(head, name, dist, exposed)
+	if not (hasTI or tiHLReady) then return end
+	if not (_G.AA_ShowTarget and _G.AA_Enabled) then hideTargetIndicator(); return end
+	local c = workspace.CurrentCamera or cam
+	if not (c and head and head.Parent) then hideTargetIndicator(); return end
+	local ok, v = pcall(function() return c:WorldToViewportPoint(head.Position) end)
+	if not ok or not v or v.Z <= 0 then hideTargetIndicator(); return end
+	local pos = Vector2.new(v.X, v.Y)
+
+	local col = tiColor()
+	local radius = _G.AA_TIRadius or 20
+	if exposed and _G.AA_TIGreenOnExposed then
+		col = Color3.fromRGB(0, 255, 0)
+		radius = radius * 0.6
+	end
+	local scale = 1
+	if _G.AA_TIBreath then
+		local mn, mx = _G.AA_TIBreathMin or 0.8, _G.AA_TIBreathMax or 1.2
+		scale = mn + (mx - mn) * (math.sin(tick() * (_G.AA_TIBreathSpeed or 1) * math.pi * 2) * 0.5 + 0.5)
+	end
+	local rot = 0
+	if _G.AA_TIRotate then
+		rot = (tick() * (_G.AA_TIRotSpeed or 1)) % (math.pi * 2)
+	end
+	local r = radius * scale
+	local style = _G.AA_TIStyle or "Circle"
+	hideTargetIndicator()
+	if not hasTI then
+		pcall(function()
+			if tiHighlight and head.Parent then
+				tiHighlight.Adornee = head.Parent
+				tiHighlight.OutlineColor = col
+				tiHighlight.FillColor = col
+				_G.AA_Stats.tiDraw = _G.AA_Stats.tiDraw + 1
+			end
+		end)
+		return
+	end
+
+	local function setLine(i, from, to)
+		local ln = tiLines[i]
+		if not ln then return end
+		ln.Visible = true; ln.Color = col
+		ln.From = from; ln.To = to
+	end
+
+	if style == "Circle" then
+		tiCircle.Visible = true
+		tiCircle.Color = col
+		tiCircle.Radius = r
+		tiCircle.Position = pos
+	elseif style == "Triangle" then
+		local p = tiPolygon(pos, r, 3, rot)
+		for i = 1, 3 do setLine(i, p[i], p[i % 3 + 1]) end
+	elseif style == "Pentagram" then
+		local p = tiPolygon(pos, r, 5, rot)
+		local order = { 1, 3, 5, 2, 4 }
+		for i = 1, 5 do setLine(i, p[order[i]], p[order[i % 5 + 1]]) end
+	elseif style == "十字准星" then
+		local len = (_G.AA_TICrosshairLength or 20) * scale
+		local gap = (_G.AA_TICrosshairGap or 5) * scale
+		local co, si = math.cos(rot), math.sin(rot)
+		local function rv(x) return Vector2.new(x.X * co - x.Y * si, x.X * si + x.Y * co) end
+		local pts = {
+			{ rv(Vector2.new(0, -len)) + pos, rv(Vector2.new(0, -gap)) + pos },
+			{ rv(Vector2.new(0,  len)) + pos, rv(Vector2.new(0,  gap)) + pos },
+			{ rv(Vector2.new(-len, 0)) + pos, rv(Vector2.new(-gap, 0)) + pos },
+			{ rv(Vector2.new( len, 0)) + pos, rv(Vector2.new( gap, 0)) + pos },
+		}
+		for i = 1, 4 do setLine(i, pts[i][1], pts[i][2]) end
+	elseif style == "三线准星" then
+		local len = (_G.AA_TIThreeLineLength or 20) * scale
+		local gap = (_G.AA_TIThreeLineGap or 5) * scale
+		for i = 1, 3 do
+			local a = rot + (i - 1) * (math.pi * 2 / 3)
+			local d = Vector2.new(math.cos(a), math.sin(a))
+			setLine(i, pos + d * gap, pos + d * len)
+		end
+	end
+
+	if tiText and _G.AA_TIShowText then
+		pcall(function()
+			tiText.Visible = true
+			tiText.Color = col
+			tiText.Text = string.format("目标 %s · %dm", tostring(name or "?"), math.floor(dist or 0))
+			tiText.Position = Vector2.new(pos.X, pos.Y + r + 14)
+		end)
+	end
+	_G.AA_Stats.tiDraw = _G.AA_Stats.tiDraw + 1
+end
+
+local DI_TweenService = game:GetService("TweenService")
+if _G.AA_DILib and _G.AA_DILib.Destroy then pcall(_G.AA_DILib.Destroy) end
+_G.AA_DILib = nil
+_G.AA_DIOk = false
+_G.AA_DIErr = ""
+_G.AA_DIParent = "nil"
+_G.AA_IslandShown = false
+_G.AA_IslandMode = "锁定"
+AA_InitFlag("AA_IslandFallback", false)  -- 仅非锁定模式生效; 锁定模式严格只认 AA_Target
+_G.AA_IslandLastLock = -1
+local okDI, errDI = pcall(function()
+    -- 逐个尝试真正把 ScreenGui 挂上去, 任何一个失败都不放弃整个灵动岛
+    local function diTryParents(gui)
+        local tries = {
+            function() return LP:FindFirstChildOfClass("PlayerGui") end,
+            function() return LP:FindFirstChild("PlayerGui") end,
+            function()
+                if type(gethui) ~= "function" then return nil end
+                local h = gethui()
+                if not h then return nil end
+                if h:IsA("ScreenGui") then return h.Parent end  -- ScreenGui 不能当父级
+                return h
+            end,
+            function() return game:GetService("CoreGui") end,
+        }
+        for _, f in ipairs(tries) do
+            local ok, p = pcall(f)
+            if ok and p then
+                pcall(function() gui.Parent = p end)
+                if gui.Parent then
+                    _G.AA_DIParent = tostring(p.Name)
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local DI_ROLE = {
+        Police = { name = "警察", color = Color3.fromRGB(70, 130, 255) },
+        Criminal = { name = "罪犯", color = Color3.fromRGB(255, 70, 70) },
+        Civilian = { name = "平民", color = Color3.fromRGB(90, 220, 130) },
+        Spectator = { name = "旁观", color = Color3.fromRGB(170, 170, 170) },
+    }
+    local COLLAPSED = 20
+    local EXP_W, EXP_H = 240, 60
+    local ISLAND_CORNER = UDim.new(0, 24)
+
+    local diGui = Instance.new("ScreenGui")
+    diGui.Name = "AA_IslandGui"
+    diGui.ResetOnSpawn = false
+    diGui.IgnoreGuiInset = true
+    diGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    diGui.DisplayOrder = 999
+    diGui.Enabled = true
+    if not diTryParents(diGui) then _G.AA_DIErr = "parent failed, retrying" end
+    task.spawn(function()
+        for _ = 1, 60 do
+            task.wait(0.5)
+            if not diGui then break end
+            if diGui.Parent then break end
+            if diTryParents(diGui) then _G.AA_DIErr = "ok (late attach)" break end
+        end
+    end)
+
+    local diContainer = Instance.new("Frame")
+    diContainer.Name = "IslandContainer"
+    diContainer.AnchorPoint = Vector2.new(0.5, 0)
+    diContainer.Position = UDim2.new(0.5, 0, 0, 6)
+    diContainer.Size = UDim2.fromOffset(COLLAPSED, COLLAPSED)
+    diContainer.BackgroundColor3 = Color3.fromRGB(38, 42, 52)
+    diContainer.BackgroundTransparency = 0.1
+    diContainer.BorderSizePixel = 0
+    diContainer.ClipsDescendants = true
+    diContainer.ZIndex = 100
+    diContainer.Visible = true
+    diContainer.Parent = diGui
+
+    local diCorner = Instance.new("UICorner", diContainer)
+    diCorner.CornerRadius = UDim.new(0.5, 0)
+
+    local diGlass = Instance.new("UIGradient", diContainer)
+    diGlass.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(48, 52, 61)),
+        ColorSequenceKeypoint.new(0.42, Color3.fromRGB(27, 30, 37)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(10, 12, 16)),
+    })
+    diGlass.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.06),
+        NumberSequenceKeypoint.new(0.5, 0.18),
+        NumberSequenceKeypoint.new(1, 0.04),
+    })
+    diGlass.Rotation = 112
+
+    local diHiStroke = Instance.new("UIStroke", diContainer)
+    diHiStroke.Color = Color3.fromRGB(255, 255, 255)
+    diHiStroke.Thickness = 0.8
+    diHiStroke.Transparency = 0.55
+    diHiStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+    local diShadowStroke = Instance.new("UIStroke", diContainer)
+    diShadowStroke.Color = Color3.new(0, 0, 0)
+    diShadowStroke.Thickness = 6
+    diShadowStroke.Transparency = 1
+    pcall(function() diShadowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Outer end)
+
+    local diReflect = Instance.new("Frame")
+    diReflect.Size = UDim2.fromScale(1, 1)
+    diReflect.BackgroundColor3 = Color3.fromRGB(225, 235, 255)
+    diReflect.BackgroundTransparency = 1
+    diReflect.BorderSizePixel = 0
+    diReflect.ZIndex = 101
+    diReflect.Parent = diContainer
+    Instance.new("UICorner", diReflect).CornerRadius = ISLAND_CORNER
+    local diReflectGrad = Instance.new("UIGradient", diReflect)
+    diReflectGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(188, 210, 238)),
+        ColorSequenceKeypoint.new(0.48, Color3.fromRGB(255, 255, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(122, 151, 190)),
+    })
+    diReflectGrad.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.98),
+        NumberSequenceKeypoint.new(0.24, 0.90),
+        NumberSequenceKeypoint.new(0.52, 0.97),
+        NumberSequenceKeypoint.new(0.78, 0.92),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    diReflectGrad.Rotation = 24
+    diReflectGrad.Offset = Vector2.new(-0.18, 0)
+
+    local diAvatarBg = Instance.new("Frame")
+    diAvatarBg.Size = UDim2.fromOffset(36, 36)
+    diAvatarBg.AnchorPoint = Vector2.new(0, 0.5)
+    diAvatarBg.Position = UDim2.new(0, 10, 0.5, 0)
+    diAvatarBg.BackgroundColor3 = Color3.fromRGB(26, 26, 33)
+    diAvatarBg.BackgroundTransparency = 1
+    diAvatarBg.BorderSizePixel = 0
+    diAvatarBg.ZIndex = 102
+    diAvatarBg.Parent = diContainer
+    Instance.new("UICorner", diAvatarBg).CornerRadius = UDim.new(1, 0)
+    local diAvatarRing = Instance.new("UIStroke", diAvatarBg)
+    diAvatarRing.Thickness = 2
+    diAvatarRing.Color = Color3.fromRGB(255, 255, 255)
+    diAvatarRing.Transparency = 1
+
+    local diAvatar = Instance.new("ImageLabel")
+    diAvatar.Size = UDim2.fromScale(1, 1)
+    diAvatar.BackgroundTransparency = 1
+    diAvatar.Image = ""
+    diAvatar.ImageTransparency = 1
+    diAvatar.ZIndex = 103
+    diAvatar.Parent = diAvatarBg
+    Instance.new("UICorner", diAvatar).CornerRadius = UDim.new(1, 0)
+
+    local diName = Instance.new("TextLabel")
+    diName.Size = UDim2.new(1, -80, 0, 13)
+    diName.Position = UDim2.new(0, 56, 0, 4)
+    diName.BackgroundTransparency = 1
+    diName.Text = ""
+    diName.TextColor3 = Color3.fromRGB(235, 236, 240)
+    diName.Font = Enum.Font.GothamBold
+    diName.TextSize = 12
+    diName.TextTransparency = 1
+    diName.TextXAlignment = Enum.TextXAlignment.Left
+    diName.TextYAlignment = Enum.TextYAlignment.Top
+    diName.TextTruncate = Enum.TextTruncate.AtEnd
+    diName.ZIndex = 104
+    diName.Parent = diContainer
+
+    local diUser = Instance.new("TextLabel")
+    diUser.Size = UDim2.new(1, -80, 0, 10)
+    diUser.Position = UDim2.new(0, 56, 0, 17)
+    diUser.BackgroundTransparency = 1
+    diUser.Text = ""
+    diUser.TextColor3 = Color3.fromRGB(152, 154, 164)
+    diUser.Font = Enum.Font.Gotham
+    diUser.TextSize = 9
+    diUser.TextTransparency = 1
+    diUser.TextXAlignment = Enum.TextXAlignment.Left
+    diUser.TextYAlignment = Enum.TextYAlignment.Top
+    diUser.TextTruncate = Enum.TextTruncate.AtEnd
+    diUser.ZIndex = 104
+    diUser.Parent = diContainer
+
+    local diStatus = Instance.new("TextLabel")
+    diStatus.Size = UDim2.new(0, 64, 0, 12)
+    diStatus.AnchorPoint = Vector2.new(1, 0)
+    diStatus.Position = UDim2.new(1, -12, 0, 5)
+    diStatus.BackgroundTransparency = 1
+    diStatus.Text = ""
+    diStatus.TextColor3 = Color3.fromRGB(170, 175, 185)
+    diStatus.Font = Enum.Font.GothamBold
+    diStatus.TextSize = 10
+    diStatus.TextTransparency = 1
+    diStatus.TextXAlignment = Enum.TextXAlignment.Right
+    diStatus.ZIndex = 104
+    diStatus.Parent = diContainer
+
+    local diHpText = Instance.new("TextLabel")
+    diHpText.Size = UDim2.new(1, -80, 0, 11)
+    diHpText.Position = UDim2.new(0, 56, 0, 29)
+    diHpText.BackgroundTransparency = 1
+    diHpText.Text = ""
+    diHpText.TextColor3 = Color3.fromRGB(180, 182, 192)
+    diHpText.Font = Enum.Font.Gotham
+    diHpText.TextSize = 10
+    diHpText.TextTransparency = 1
+    diHpText.TextXAlignment = Enum.TextXAlignment.Left
+    diHpText.TextYAlignment = Enum.TextYAlignment.Top
+    diHpText.ZIndex = 104
+    diHpText.Parent = diContainer
+
+    local diBarBg = Instance.new("Frame")
+    diBarBg.Size = UDim2.new(1, -80, 0, 7)
+    diBarBg.Position = UDim2.new(0, 56, 0, 42)
+    diBarBg.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    diBarBg.BackgroundTransparency = 1
+    diBarBg.BorderSizePixel = 0
+    diBarBg.ZIndex = 102
+    diBarBg.Parent = diContainer
+    Instance.new("UICorner", diBarBg).CornerRadius = UDim.new(0, 3)
+    local diBarFill = Instance.new("Frame")
+    diBarFill.Size = UDim2.new(1, 0, 1, 0)
+    diBarFill.BackgroundColor3 = Color3.fromRGB(92, 216, 102)
+    diBarFill.BackgroundTransparency = 1
+    diBarFill.BorderSizePixel = 0
+    diBarFill.ZIndex = 103
+    diBarFill.Parent = diBarBg
+    Instance.new("UICorner", diBarFill).CornerRadius = UDim.new(0, 3)
+
+    local diState = "collapsed"
+    local diTweens = {}
+    local diTargetKey = nil
+    local diAvatarCache = {}
+    local diAvatarLoading = {}
+    local diPending = nil
+    local diHp, diMaxHp, diDist = -1, -1, -1
+    local diLastTick = 0
+
+    local function diTweenProp(obj, props, dur, style, dir)
+        local tm = diTweens[obj] or {}
+        for prop, goal in pairs(props) do
+            if tm[prop] then tm[prop]:Cancel() end
+            local t = DI_TweenService:Create(obj, TweenInfo.new(dur or 0.25, style or Enum.EasingStyle.Quint, dir or Enum.EasingDirection.Out), { [prop] = goal })
+            t:Play()
+            tm[prop] = t
+        end
+        diTweens[obj] = tm
+    end
+
+    local diFadeItems = {
+        { diAvatarBg, "bg" }, { diAvatarRing, "stroke" }, { diAvatar, "image" },
+        { diName, "text" }, { diUser, "text" }, { diStatus, "text" }, { diHpText, "text" },
+        { diBarBg, "bg" }, { diBarFill, "bg" },
+    }
+    local function diFadeContent(toTrans, dur)
+        for _, item in ipairs(diFadeItems) do
+            local obj, kind = item[1], item[2]
+            if kind == "text" then diTweenProp(obj, { TextTransparency = toTrans }, dur)
+            elseif kind == "image" then diTweenProp(obj, { ImageTransparency = toTrans }, dur)
+            elseif kind == "stroke" then diTweenProp(obj, { Transparency = toTrans }, dur)
+            else diTweenProp(obj, { BackgroundTransparency = toTrans }, dur) end
+        end
+    end
+
+    local function diHealthColor(ratio)
+        if ratio > 0.6 then return Color3.fromRGB(92, 216, 102) end
+        if ratio > 0.3 then return Color3.fromRGB(240, 196, 60) end
+        return Color3.fromRGB(236, 66, 66)
+    end
+
+    local function diLoadAvatar(userId)
+        if diAvatarLoading[userId] then return end
+        diAvatarLoading[userId] = true
+        task.spawn(function()
+            local url = ""
+            for _ = 1, 3 do
+                local ok, content, isReady = pcall(Players.GetUserThumbnailAsync, Players, userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+                if ok and type(content) == "string" and content ~= "" and isReady then url = content break end
+                task.wait(0.8)
+            end
+            diAvatarLoading[userId] = nil
+            if url ~= "" then
+                diAvatarCache[userId] = url
+                if diTargetKey == "P" .. tostring(userId) then
+                    diAvatar.Image = url
+                    diTweenProp(diAvatar, { ImageTransparency = 0 }, 0.2)
+                end
+            end
+        end)
+    end
+
+    local function diRenderHp()
+        diHpText.Text = string.format("HP %d/%d · %dm", diHp, diMaxHp, math.max(0, diDist))
+    end
+
+    local function diSetValues(rec, humanoid)
+        local maxHealth = humanoid and humanoid.MaxHealth or 1
+        local health = humanoid and humanoid.Health or 0
+        local ratio = maxHealth > 0 and math.clamp(health / maxHealth, 0, 1) or 0
+        local h, mh, ds = math.floor(health), math.floor(maxHealth), math.floor(rec.dist or 0)
+        if h ~= diHp or mh ~= diMaxHp then
+            diHp, diMaxHp = h, mh
+            diTweenProp(diBarFill, { Size = UDim2.new(ratio, 0, 1, 0) }, 0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+            diTweenProp(diBarFill, { BackgroundColor3 = diHealthColor(ratio) }, 0.25)
+        end
+        if ds ~= diDist then diDist = ds end
+        diRenderHp()
+    end
+
+    local function diApply(rec, player, humanoid)
+        local info = DI_ROLE[rec.role]
+        if player and player:IsA("Player") then
+            diName.Text = tostring(player.DisplayName ~= "" and player.DisplayName or player.Name)
+            diUser.Text = "@" .. tostring(player.Name) .. (info and (" · " .. info.name) or "")
+            local uid = player.UserId
+            local cached = diAvatarCache[uid]
+            diAvatar.Image = cached or ""
+            if not cached then diLoadAvatar(uid) end
+        else
+            diName.Text = tostring(rec.char.Name)
+            diUser.Text = (info and (info.name .. " · NPC") or "NPC")
+            diAvatar.Image = ""
+        end
+        diAvatarRing.Color = info and info.color or Color3.fromRGB(255, 255, 255)
+        local locked = (_G.AA_Target == rec)
+        diStatus.Text = locked and "锁定中" or "目标信息"
+        diStatus.TextColor3 = locked and Color3.fromRGB(150, 230, 160) or Color3.fromRGB(170, 175, 185)
+        diHp, diMaxHp, diDist = -1, -1, -1
+        diSetValues(rec, humanoid)
+    end
+
+    local function diToBall()
+        _G.AA_IslandShown = false
+        if diState == "collapsed" then return end
+        diState = "collapsed"
+        diTargetKey = nil
+        if diPending then pcall(task.cancel, diPending) diPending = nil end
+        diFadeContent(1, 0.12)
+        diTweenProp(diContainer, { Size = UDim2.fromOffset(COLLAPSED, COLLAPSED), BackgroundColor3 = Color3.fromRGB(38, 42, 52), BackgroundTransparency = 0.1 }, 0.3)
+        diTweenProp(diCorner, { CornerRadius = UDim.new(0.5, 0) }, 0.3)
+        diTweenProp(diReflect, { BackgroundTransparency = 1 }, 0.18)
+        diTweenProp(diReflectGrad, { Offset = Vector2.new(-0.18, 0) }, 0.22)
+        diTweenProp(diHiStroke, { Transparency = 0.55 }, 0.2)
+        diTweenProp(diShadowStroke, { Transparency = 1 }, 0.2)
+    end
+
+    local function diToIsland()
+        _G.AA_IslandShown = true
+        if diState == "expanded" then return end
+        diState = "expanded"
+        diTweenProp(diContainer, { Size = UDim2.fromOffset(EXP_W, EXP_H), BackgroundColor3 = Color3.fromRGB(44, 48, 57), BackgroundTransparency = 0.28 }, 0.34)
+        diTweenProp(diCorner, { CornerRadius = ISLAND_CORNER }, 0.34)
+        diTweenProp(diReflect, { BackgroundTransparency = 0.76 }, 0.38)
+        diTweenProp(diReflectGrad, { Offset = Vector2.new(0.12, 0) }, 0.5)
+        diTweenProp(diHiStroke, { Transparency = 0.9 }, 0.3)
+        diTweenProp(diShadowStroke, { Transparency = 0.86 }, 0.3)
+    end
+
+    local diTestUntil = 0
+    local diLastRec, diLastSeen = nil, 0
+    local function diLooseScan()
+        local myChar = LP.Character
+        if not myChar then return nil end
+        local hrp = myChar:FindFirstChild("HumanoidRootPart")
+        if not hrp then return nil end
+        local okRole, myRole = pcall(getRole, LP)
+        if not okRole or myRole == nil or myRole == "Spectator" then return nil end
+        local ok, cands = pcall(collectCandidates, myRole, hrp.Position)
+        if not ok or type(cands) ~= "table" then return nil end
+        local best
+        for _, c in ipairs(cands) do
+            if c and c.char and c.head and c.char.Parent then
+                if not best or (c.dist or 0) < (best.dist or 0) then best = c end
+            end
+        end
+        return best
+    end
+    local diLooseAt, diLooseCache = 0, nil
+    local function diLooseCached()
+        local now = os.clock()
+        if now - diLooseAt < 0.2 then return diLooseCache end
+        diLooseAt = now
+        diLooseCache = diLooseScan()
+        return diLooseCache
+    end
+    local function diPickTarget()
+        local mode = _G.AA_IslandMode or "锁定"
+        local locked = _G.AA_Target
+        if locked and locked.char and locked.char.Parent and locked.head and locked.head.Parent then
+            diLastRec, diLastSeen = locked, os.clock()
+            _G.AA_IslandLastLock = 0
+            return locked
+        end
+        if mode ~= "锁定" then
+            if mode == "视野" then
+                local shown = _G.AA_DisplayTarget
+                if shown and shown.char and shown.char.Parent and shown.head and shown.head.Parent then
+                    return shown
+                end
+            elseif mode == "任意" then
+                local loose = diLooseCached()
+                if loose then return loose end
+            end
+            if _G.AA_IslandFallback == true then
+                local shown = _G.AA_DisplayTarget
+                if shown and shown.char and shown.char.Parent and shown.head and shown.head.Parent then
+                    return shown
+                end
+                local loose = diLooseCached()
+                if loose then return loose end
+            end
+        end
+        if diLastRec and (os.clock() - diLastSeen) < 2
+            and diLastRec.char and diLastRec.char.Parent then
+            _G.AA_IslandLastLock = math.floor((os.clock() - diLastSeen) * 10) / 10
+            return diLastRec
+        end
+        diLastRec = nil
+        _G.AA_IslandLastLock = -1
+        return nil
+    end
+
+    local function diTest()
+        diTestUntil = os.clock() + 3
+        diTargetKey = "TEST"
+        if diPending then pcall(task.cancel, diPending) diPending = nil end
+        diToIsland()
+        diName.Text = "灵动岛测试"
+        diUser.Text = "@preview"
+        diStatus.Text = "测试"
+        diStatus.TextColor3 = Color3.fromRGB(150, 230, 160)
+        diHpText.Text = "HP 100/100"
+        diTweenProp(diBarFill, { Size = UDim2.new(1, 0, 1, 0) }, 0.2)
+        diFadeContent(0, 0.15)
+        task.delay(3, function()
+            if os.clock() >= diTestUntil then diTargetKey = nil diToBall() end
+        end)
+    end
+
+    local function diValidate(rec)
+        if not rec or not rec.char or not rec.char.Parent then return nil end
+        local humanoid = rec.char:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then return nil end
+        local player = Players:GetPlayerFromCharacter(rec.char)
+        return player, humanoid
+    end
+
+    local function diRefresh(rec)
+        if not _G.AA_IslandOn then diToBall() return end
+        local player, humanoid = diValidate(rec)
+        if not humanoid then diToBall() return end
+        diToIsland()
+        local key = player and ("P" .. tostring(player.UserId)) or ("C" .. tostring(rec.char))
+        if key ~= diTargetKey then
+            diTargetKey = key
+            if diPending then pcall(task.cancel, diPending) diPending = nil end
+            diFadeContent(1, 0.1)
+            diPending = task.delay(0.13, function()
+                if diTargetKey ~= key then diPending = nil return end
+                pcall(diApply, rec, player, humanoid)
+                pcall(diFadeContent, 0, 0.22)   -- 即使 diApply 出错也强制淡入
+                diPending = nil
+            end)
+        else
+            diSetValues(rec, humanoid)
+            local locked = (_G.AA_Target == rec)
+            local txt = locked and "锁定中" or "目标信息"
+            if diStatus.Text ~= txt then
+                diStatus.Text = txt
+                diStatus.TextColor3 = locked and Color3.fromRGB(150, 230, 160) or Color3.fromRGB(170, 175, 185)
+            end
+        end
+    end
+
+    local diConn = RunService.RenderStepped:Connect(function()
+        if diGui and not diGui.Enabled then diGui.Enabled = true end
+        if not diGui or not diGui.Parent then
+            local okRe = diGui and diTryParents(diGui)
+            if okRe and diGui and diGui.Parent then
+                _G.AA_Stats.diReattach = (_G.AA_Stats.diReattach or 0) + 1
+            end
+        end
+        local okFrame, errFrame = pcall(function()
+            if not _G.AA_IslandOn then diToBall() return end
+            if os.clock() < diTestUntil then return end
+            local rec = diPickTarget()
+            if not rec or not rec.char then diToBall() return end
+            local now = os.clock()
+            if now - diLastTick < 0.05 then return end
+            diLastTick = now
+            pcall(diRefresh, rec)
+        end)
+        if not okFrame then
+            _G.AA_Stats.diErr = (_G.AA_Stats.diErr or 0) + 1
+            _G.AA_DIErr = tostring(errFrame)
+        end
+    end)
+
+    local function diDestroy()
+        if diConn and diConn.Connected then diConn:Disconnect() end
+        if diPending then pcall(task.cancel, diPending) diPending = nil end
+        for _, tm in pairs(diTweens) do
+            for _, t in pairs(tm) do pcall(function() t:Cancel() end) end
+        end
+        if diGui and diGui.Parent then diGui:Destroy() end
+    end
+    _G.AA_DILib = {
+        Refresh = diRefresh, Collapse = diToBall, Test = diTest, Destroy = diDestroy,
+        Force = function()
+            pcall(function()
+                diGui.Enabled = true
+                diContainer.Visible = true
+                if not diGui.Parent then diTryParents(diGui) end
+            end)
+            diTest()
+            return tostring(diGui and diGui.Parent and diGui.Parent.Name or "nil")
+        end,
+    }
+end)
+_G.AA_DIOk = okDI and (_G.AA_DILib ~= nil)
+if not okDI then _G.AA_DIErr = tostring(errDI) end
+if _G.AA_DILib and _G.AA_DIErr == "" then _G.AA_DIErr = "ok" end
+
+--====================================================================--
+-- [缝合] 自动射击模块 / R_GunEngine.Shoot
+--   抓包: Shoot:FireServer({ { Origin = Vector3, EndPosition = Vector3 } })
+--   实测 |EndPosition - Origin| = 1000.000 => EndPosition 是"固定长度射线终点",
+--   不是命中点; 保持长度、只把方向指向敌人头部即可。
+--   复用本脚本: getRole / hostileLevel / collectCandidates / findTarget /
+--              _G.AA_Target / screenInFOV / isExposed / aimPoint /
+--              muzzleWorldPos (枪口 = 抓包里的 Origin)
+--====================================================================--
+AA_InitFlag("AA_AutoFire",          false)      -- 独立总开关 (热键 RightShift)
+AA_InitFlag("AA_AutoFireRate",      0)          -- 射击间隔(秒), 0 = 每帧
+AA_InitFlag("AA_AutoFireRayLen",    1000)       -- 包内射线长度(抓包实测 1000)
+AA_InitFlag("AA_AutoFireEndMode",   "固定长度") -- "固定长度" | "命中点"
+AA_InitFlag("AA_AutoFireTargets",   1)          -- 一次包里打几个目标
+AA_InitFlag("AA_AutoFireTracer",    true)       -- 绘制弹道
+AA_InitFlag("AA_AutoFireWallCheck", true)       -- 不隔墙射击
+AA_InitFlag("AA_AutoFireRelax",     false)      -- 自身阵营未识别时的兜底
+AA_InitFlag("AA_AutoFireNeedLock",  true)       -- 仅当辅助锁定目标(_G.AA_Target)才开火
+AA_InitFlag("AA_AutoFirePredict",   true)       -- 运动预测总开关
+AA_InitFlag("AA_AutoFireLead",      0.10)       -- 手动提前量(秒)
+AA_InitFlag("AA_AutoFirePingComp",  true)       -- 叠加网络延迟补偿
+AA_InitFlag("AA_AutoFirePingScale", 0.5)        -- 延迟系数(ping 为往返, 0.5 = 单程)
+AA_InitFlag("AA_AutoFireSmooth",    0.35)       -- 速度平滑系数(越大越灵敏, 越抖)
+AA_InitFlag("AA_AutoFireMaxLead",   60)         -- 最大提前距离(studs)
+AA_InitFlag("AA_AutoFirePredMark",  false)      -- 绘制预测点标记
+_G.AA_PredDebug = { speed = 0, lead = 0 }
+_G.AA_Stats.autoFire    = 0
+_G.AA_Stats.autoFireErr = 0
+_G.AA_AutoFireLast      = 0
+
+local AA_Shoot = nil
+local function aaResolveShoot()
+    local ok, e = pcall(function()
+        local rem = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+        local eng = rem and rem:FindFirstChild("R_GunEngine")
+        return eng and eng:FindFirstChild("Shoot") or nil
+    end)
+    if ok then return e end
+    return nil
+end
+AA_Shoot = aaResolveShoot()
+task.spawn(function()
+    while not AA_Shoot do task.wait(0.5); AA_Shoot = aaResolveShoot() end
+    print("[自动射击] 已连接 R_GunEngine.Shoot")
+end)
+_G.AA_GetShoot = function() return AA_Shoot end
+
+-- Origin: 枪口 (与抓包 Origin 一致) -> 自己头部 -> 相机
+local function aaOrigin()
+    if _G.AA_RayFromMuzzle then
+        local ok, p = pcall(muzzleWorldPos)
+        if ok and p then return p end
+    end
+    local ch = LP.Character
+    local h = ch and ch:FindFirstChild("Head", true)
+    if h and h:IsA("BasePart") then return h.Position end
+    local c = workspace.CurrentCamera
+    if c then return c.CFrame.Position end
+    return nil
+end
+
+-- 可见性: 强制复用 isExposed, 保证不隔墙(不受面板 ExposedOnly 影响)
+local function aaVisible(t)
+    if not _G.AA_AutoFireWallCheck then return true end
+    local ok, ex = pcall(isExposed, t.head, t.char)
+    return ok and ex == true
+end
+
+-- 自身 Role 为 nil / Spectator 时 findTarget 会返回 nil -> 宽松兜底
+local aaRelaxWarned = false
+local function aaRelaxTarget(origin)
+    local mine = getRole(LP)
+    if mine and mine ~= "Spectator" then return nil end
+    local best
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == LP or not p.Character then continue end
+        local role = getRole(p)
+        if role == "Spectator" then continue end
+        if LP.Team and p.Team and LP.Team == p.Team then continue end
+        local ch = p.Character
+        local hum = ch:FindFirstChildOfClass("Humanoid")
+        if not hum or hum.Health <= 0 then continue end
+        local head = aimPoint(ch)
+        if not head or not head:IsA("BasePart") then continue end
+        local d = (head.Position - origin).Magnitude
+        if d > _G.AA_MaxDist then continue end
+        local okF, inF = pcall(screenInFOV, head.Position)
+        if not okF or not inF then continue end
+        local t = { head = head, char = ch, role = role, dist = d, sure = false }
+        if aaVisible(t) and (not best or d < best.dist) then best = t end
+    end
+    if best and not aaRelaxWarned then
+        aaRelaxWarned = true
+        warn("[自动射击] 自身阵营未识别, 已启用宽松兜底(可能误伤), 可在面板关闭")
+    end
+    return best
+end
+
+-- 取目标: 默认"被锁定才攻击"
+--   _G.AA_Target 由 RenderStepped 主循环的 findTarget() 每帧产生,
+--   已通过 队伍检测 / FOV / 可见性 / 距离 / 存活 过滤 (灵动岛"锁定中"即此目标)
+local function aaTargets(origin)
+    local n = math.max(1, math.floor(_G.AA_AutoFireTargets or 1))
+
+    if _G.AA_AutoFireNeedLock then
+        -- 总开关未开时主循环不会锁定目标 -> 停火
+        if not _G.AA_Enabled then return {} end
+        local locked = _G.AA_Target
+        if not locked or not locked.head or not locked.head.Parent
+            or not locked.char or not locked.char.Parent then return {} end
+        if not aaVisible(locked) then return {} end   -- 不隔墙双保险
+
+        if n == 1 then return { locked } end
+        -- 多目标: 以锁定目标为首, 其余从 collectCandidates 补(同一套队伍检测)
+        local list = { locked }
+        local ch = LP.Character
+        local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+        local ok, cands = pcall(collectCandidates, getRole(LP), hrp and hrp.Position or origin)
+        if ok and type(cands) == "table" then
+            table.sort(cands, function(a, b) return (a.dist or 9e9) < (b.dist or 9e9) end)
+            for _, c in ipairs(cands) do
+                if #list >= n then break end
+                if c.char == locked.char then continue end
+                local okF, inF = pcall(screenInFOV, c.head.Position)
+                if okF and inF and aaVisible(c) then table.insert(list, c) end
+            end
+        end
+        return list
+    end
+
+    -- 关闭"被锁定才攻击"时: 沿用旧的独立寻找逻辑(可脱离总开关工作)
+    local primary
+    if _G.AA_Enabled then
+        primary = _G.AA_Target
+    else
+        local ok, r = pcall(findTarget)
+        if ok then primary = r end
+    end
+    if not primary and _G.AA_AutoFireRelax then primary = aaRelaxTarget(origin) end
+    if n == 1 then
+        return (primary and aaVisible(primary)) and { primary } or {}
+    end
+    local list = {}
+    local ch = LP.Character
+    local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+    local ok, cands = pcall(collectCandidates, getRole(LP), hrp and hrp.Position or origin)
+    if ok and type(cands) == "table" then
+        table.sort(cands, function(a, b) return (a.dist or 9e9) < (b.dist or 9e9) end)
+        for _, c in ipairs(cands) do
+            if #list >= n then break end
+            local okF, inF = pcall(screenInFOV, c.head.Position)
+            if okF and inF and aaVisible(c) then table.insert(list, c) end
+        end
+    end
+    if #list == 0 and primary and aaVisible(primary) then table.insert(list, primary) end
+    if #list == 0 and _G.AA_AutoFireRelax then
+        local r = aaRelaxTarget(origin)
+        if r then table.insert(list, r) end
+    end
+    return list
+end
+
+--====================================================================--
+-- 运动预测: 把射线指向目标的"未来位置", 解决移动目标打不中
+--   采样与发射节流解耦(独立 Heartbeat 每帧采样), 长间隔下速度依然连续
+--   提前时间 = 手动提前量 + 网络延迟(ping) * 系数
+--   速度 = 帧差(指数平滑) 与 引擎线速度 取模较大者; 瞬移/重生会限幅剔除
+--   预测点落在掩体后时自动截断到墙前, 不把射线瞄进墙里
+--====================================================================--
+local aaTrack = setmetatable({}, { __mode = "k" })   -- 弱键, 目标销毁自动回收
+
+local function aaPhysVel(part)
+    local best = Vector3.new(0, 0, 0)
+    pcall(function()
+        local a = part.AssemblyLinearVelocity
+        if typeof(a) == "Vector3" and a.Magnitude > best.Magnitude then best = a end
+    end)
+    pcall(function()
+        local b = part.Velocity
+        if typeof(b) == "Vector3" and b.Magnitude > best.Magnitude then best = b end
+    end)
+    return best
+end
+
+local function aaSample(part)
+    if not part or not part.Parent then return end
+    local now = os.clock()
+    local pos = part.Position
+    local rec = aaTrack[part]
+    if not rec then
+        aaTrack[part] = { pos = pos, t = now, vel = Vector3.new(0, 0, 0) }
+        return
+    end
+    local dt = now - rec.t
+    local raw = Vector3.new(0, 0, 0)
+    if dt > 0.004 and dt < 0.5 then raw = (pos - rec.pos) / dt end
+    local phys = aaPhysVel(part)
+    if phys.Magnitude > raw.Magnitude then raw = phys end
+    if raw.Magnitude > 150 then raw = Vector3.new(0, 0, 0) end   -- 瞬移/重生剔除
+    local a = tonumber(_G.AA_AutoFireSmooth) or 0.35
+    if a < 0.02 then a = 0.02 elseif a > 1 then a = 1 end
+    local v = rec.vel + (raw - rec.vel) * a
+    if v.Magnitude < 1.2 then v = Vector3.new(0, 0, 0) end       -- 静止死区
+    rec.pos, rec.t, rec.vel = pos, now, v
+end
+
+-- 每帧采样锁定目标(与"射击间隔"无关, 否则 0.5s 间隔下速度会严重失真)
+_G.AA_PredConn = RunService.Heartbeat:Connect(function()
+    if not _G.AA_AutoFire or not _G.AA_AutoFirePredict then return end
+    local lt = _G.AA_Target
+    if lt and lt.head and lt.head.Parent then aaSample(lt.head) end
+end)
+
+local function aaLeadTime()
+    local t = math.max(0, tonumber(_G.AA_AutoFireLead) or 0)
+    if _G.AA_AutoFirePingComp then
+        local ok, ping = pcall(function() return LP:GetNetworkPing() end)
+        if ok and type(ping) == "number" and ping > 0 and ping < 2 then
+            t = t + ping * (tonumber(_G.AA_AutoFirePingScale) or 1)
+        end
+    end
+    if t > 1 then t = 1 end
+    return t
+end
+
+local function aaClipPred(fromPos, pred, char)
+    local d = pred - fromPos
+    if d.Magnitude < 0.6 then return pred end
+    local params = RaycastParams.new()
+    if not pcall(function() params.FilterType = Enum.RaycastFilterType.Exclude end) then
+        pcall(function() params.FilterType = Enum.RaycastFilterType.Blacklist end)
+    end
+    pcall(function() params.RespectCanCollide = true end)
+    local ignore = {}
+    if LP.Character then table.insert(ignore, LP.Character) end
+    if char then table.insert(ignore, char) end
+    local cam = workspace.CurrentCamera
+    if cam then table.insert(ignore, cam) end
+    params.FilterDescendantsInstances = ignore
+    local old = _G.AA_InDetectRay
+    _G.AA_InDetectRay = true
+    local ok, r = pcall(function() return workspace:Raycast(fromPos, d, params) end)
+    _G.AA_InDetectRay = old          -- 无条件恢复, 绝不让 namecall hook 长期放行
+    if not ok then r = nil end
+    if ok and r and r.Instance then
+        local stop = r.Distance - 0.3
+        if stop < 0 then stop = 0 end
+        return fromPos + d.Unit * stop
+    end
+    return pred
+end
+
+local function aaAimPos(t)
+    local head = t.head
+    local pos = head.Position
+    local dbg = _G.AA_PredDebug
+    if not dbg then dbg = {}; _G.AA_PredDebug = dbg end
+    dbg.speed, dbg.lead = 0, 0
+    if not _G.AA_AutoFirePredict then return pos end
+    local rec = aaTrack[head]
+    local v = (rec and rec.vel) or Vector3.new(0, 0, 0)
+    if v.Magnitude < 1.2 then v = aaPhysVel(head) end   -- 未被采样的目标兜底
+    if v.Magnitude < 1.2 then return pos end             -- 静止目标无需提前量
+    local lead = aaLeadTime()
+    if lead <= 0 then return pos end
+    local off = v * lead
+    local cap = math.max(0, tonumber(_G.AA_AutoFireMaxLead) or 60)
+    if off.Magnitude > cap then off = off.Unit * cap end
+    local pred = aaClipPred(pos, pos + off, t.char)
+    dbg.speed = math.floor(v.Magnitude * 10) / 10
+    dbg.lead  = math.floor((pred - pos).Magnitude * 10) / 10
+    t._pred = pred
+    return pred
+end
+
+local function aaPredMark(p)
+    if not _G.AA_AutoFirePredMark then return end
+    local m = Instance.new("Part")
+    m.Name = "AA_PredMark"
+    m.Shape = Enum.PartType.Ball
+    m.Size = Vector3.new(0.5, 0.5, 0.5)
+    m.Position = p
+    m.Anchored = true
+    m.CanCollide = false
+    m.CanQuery = false
+    m.CanTouch = false
+    m.CastShadow = false
+    m.Material = Enum.Material.Neon
+    m.Color = Color3.fromRGB(0, 255, 255)
+    m.Parent = workspace
+    game:GetService("Debris"):AddItem(m, 0.08)
+end
+
+-- 发包: 保持协议长度, 只把方向指向预测位置
+local function aaFire(origin, targets)
+    local shots = {}
+    for _, t in ipairs(targets) do
+        if not t.head or not t.head.Parent then continue end
+        local aim = aaAimPos(t)
+        local dir = (aim - origin).Unit
+        local endPos
+        if _G.AA_AutoFireEndMode == "命中点" then
+            endPos = aim
+        else
+            endPos = origin + dir * (_G.AA_AutoFireRayLen or 1000)
+        end
+        table.insert(shots, { Origin = origin, EndPosition = endPos })
+        t._end = endPos
+    end
+    if #shots == 0 then return false end
+    AA_Shoot:FireServer(shots)
+    return true
+end
+
+local function aaTracer(a, b)
+    if not _G.AA_AutoFireTracer then return end
+    local len = (b - a).Magnitude
+    if len < 0.1 then return end
+    local p = Instance.new("Part")
+    p.Name = "AA_AutoFireTracer"
+    p.Anchored = true
+    p.CanCollide = false
+    p.CanQuery = false
+    p.CanTouch = false
+    p.CastShadow = false
+    p.Material = Enum.Material.Neon
+    p.Color = Color3.fromRGB(255, 60, 60)
+    p.Size = Vector3.new(0.06, 0.06, len)
+    p.CFrame = CFrame.lookAt((a + b) / 2, b)
+    p.Parent = workspace
+    game:GetService("Debris"):AddItem(p, 0.06)
+end
+
+-- 射击间隔: os.clock 节流; 0 = 每帧(引擎最快), 面板可 0~2s 无级调节
+_G.AA_AutoFireConn = RunService.Heartbeat:Connect(function()
+    if not _G.AA_AutoFire or not AA_Shoot then return end
+    local now = os.clock()
+    local rate = math.max(0, tonumber(_G.AA_AutoFireRate) or 0)
+    if rate > 0 and (now - (_G.AA_AutoFireLast or 0)) < rate then return end
+
+    local origin = aaOrigin()
+    if not origin then return end
+    local targets = aaTargets(origin)
+    if #targets == 0 then return end
+
+    local ok = pcall(aaFire, origin, targets)
+    if not ok then
+        _G.AA_Stats.autoFireErr = (_G.AA_Stats.autoFireErr or 0) + 1
+        return
+    end
+    for _, t in ipairs(targets) do
+        if t._end then aaTracer(origin, t._end) end
+        if t._pred then aaPredMark(t._pred) end
+    end
+    _G.AA_Stats.autoFire = (_G.AA_Stats.autoFire or 0) + #targets
+    _G.AA_AutoFireLast = now
+end)
+_G.AA_AutoFireOnce = function()
+    local o = aaOrigin()
+    if not o or not AA_Shoot then return false end
+    local ts = aaTargets(o)
+    if #ts == 0 then return false end
+    return pcall(aaFire, o, ts)
+end
+
+_G.AA_RS = RunService.RenderStepped:Connect(function()
+	pcall(function()
+		if not _G.AA_Enabled or not _G.AA_ShieldPierce then _G.AA_ShieldIgnores = nil return end
+		if _G.AA_ShieldScanAt and (os.clock() - _G.AA_ShieldScanAt) < 0.5 then return end
+		_G.AA_ShieldScanAt = os.clock()
+		_G.AA_ShieldIgnores = collectShieldIgnores()
+		_G.AA_Stats.shieldObjs = #_G.AA_ShieldIgnores
+		_G.AA_Stats.shieldScan = (_G.AA_Stats.shieldScan or 0) + 1
+	end)
+	pcall(function()
+	if hasDraw then
+		if _G.AA_Enabled and _G.AA_FOVCircle and _G.AA_FOV < 359 then
+			local R, vp = fovRadiusPx()
+			if R and vp then
+				fovCircle.Visible = true
+				fovCircle.Position = Vector2.new(vp.X / 2, vp.Y / 2)
+				fovCircle.Radius = R
+				fovCircle.Color = _G.AA_FOVColor
+				fovCircle.Thickness = _G.AA_FOVThickness
+				fovCircle.Transparency = _G.AA_FOVTransparency
+			else
+				fovCircle.Visible = false
+			end
+		else
+			fovCircle.Visible = false
+		end
+	end
+	end)
+
+    if cam and cam.Parent == nil then
+        local okCam, newCam = pcall(function() return workspace.CurrentCamera end)
+        if okCam and newCam then cam = newCam end
+    end
+    if not _G.AA_Enabled or not cam then
+        _G.AA_Target = nil
+        _G.AA_DisplayTarget = nil
+        pcall(restoreMuzzle)
+        pcall(hideTargetIndicator)
+        return
+    end
+
+    local okFind, tgt = pcall(findTarget)
+    if not okFind then
+        tgt = nil
+        pcall(function() _G.AA_Stats.findErr = (_G.AA_Stats.findErr or 0) + 1 end)
+    end
+    _G.AA_Target = tgt
+    local disp = nil
+    if not tgt then
+        local okD, d = pcall(findDisplayTarget)
+        if okD then disp = d end
+    end
+    _G.AA_DisplayTarget = tgt or disp
+
+    if not tgt then
+        pcall(restoreMuzzle)
+    elseif _G.AA_MuzzleAim then
+        pcall(aimMuzzleAt, tgt.head.Position)
+    else
+        pcall(restoreMuzzle)
+    end
+
+    pcall(function()
+        local d = _G.AA_DisplayTarget
+        if not d then pcall(hideTargetIndicator) return end
+        local okE, exposed = pcall(isExposed, d.head, d.char)
+        if not okE then exposed = false end
+        drawTargetIndicator(d.head, d.char.Name, d.dist, exposed)
+    end)
+end)
+
+local ROLE = {
+	Police    = { name = "警察", color = Color3.fromRGB(70, 130, 255) },
+	Criminal  = { name = "罪犯", color = Color3.fromRGB(255, 70, 70) },
+	Civilian  = { name = "平民", color = Color3.fromRGB(90, 220, 130) },
+	Spectator = { name = "旁观", color = Color3.fromRGB(170, 170, 170) },
+}
+local function roleInfo(r)
+	return ROLE[r] or { name = tostring(r or "?"), color = Color3.fromRGB(230, 230, 230) }
+end
+
+local esp = {}
+
+local espHolder = nil
+local function getESPHolder()
+	if espHolder and espHolder.Parent then
+		local ok, alive = pcall(function() return espHolder:IsDescendantOf(game) end)
+		if ok and alive then return espHolder end
+	end
+	local parent = nil
+	pcall(function() if gethui then parent = gethui() end end)
+	if not parent then
+		local pg = LP:FindFirstChildOfClass("PlayerGui")
+		if pg then
+			local sg = pg:FindFirstChild("AA_ESP_Screen")
+			if not sg then
+				sg = Instance.new("ScreenGui")
+				sg.Name = "AA_ESP_Screen"
+				sg.ResetOnSpawn = false
+				sg.DisplayOrder = 10
+				pcall(function() sg.Parent = pg end)
+			end
+			parent = sg
+		end
+	end
+	if not parent then parent = workspace.CurrentCamera end
+	local f = Instance.new("Folder")
+	f.Name = "AA_ESP_Holder"
+	pcall(function() f.Parent = parent end)
+	if not f.Parent then pcall(function() f.Parent = workspace.CurrentCamera end) end
+	espHolder = f
+	return f
+end
+
+local function destroyESP(char)
+	local rec = esp[char]
+	if not rec then return end
+	pcall(function() rec.bg:Destroy() end)
+	pcall(function() rec.hl:Destroy() end)
+	if rec.boxes then
+		for _, b in ipairs(rec.boxes) do pcall(function() b:Destroy() end) end
+	end
+	esp[char] = nil
+end
+
+local function sweepESPOrphans()
+	if not espHolder or not espHolder.Parent then return end
+	local live = {}
+	for _, rec in pairs(esp) do
+		if rec.hl then live[rec.hl] = true end
+		if rec.boxes then
+			for _, b in ipairs(rec.boxes) do live[b] = true end
+		end
+	end
+	local ok, kids = pcall(function() return espHolder:GetChildren() end)
+	if not ok or not kids then return end
+	for _, obj in ipairs(kids) do
+		if not live[obj] then pcall(function() obj:Destroy() end) end
+	end
+end
+
+local function espWallRoleAllowed(role)
+    if _G.AA_ESPWall == false then return false end
+    local t = _G.AA_ESPWallRoles
+    if type(t) ~= "table" then return true end
+    if role == nil then return true end
+    return t[role] ~= false
+end
+local function makeESP(char, player)
+	if esp[char] then return end
+	if not char or not char.Parent then return end
+	local ad = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not ad or not hum then return end
+	local role = nil
+	if player then role = player:GetAttribute("Role") end
+	if not role then role = char:GetAttribute("Role") end
+	if not role then return end
+	local info = roleInfo(role)
+	local name = player and player.Name or char.Name
+
+	local bg = Instance.new("BillboardGui")
+	bg.Name = "ESP_Billboard"
+	bg.Adornee = ad
+	bg.Size = UDim2.new(0, 200, 0, 40)
+	bg.StudsOffset = Vector3.new(0, 1.2, 0)
+	bg.AlwaysOnTop = espWallRoleAllowed(role)
+	bg.ResetOnSpawn = false
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 0.6, 0)
+	label.BackgroundTransparency = 1
+	label.Text = name .. " [" .. info.name .. "]"
+	label.TextColor3 = info.color
+	label.TextStrokeTransparency = 0.4
+	label.TextStrokeColor3 = Color3.new(0, 0, 0)
+	label.TextScaled = false
+	label.TextSize = 14
+	label.Font = Enum.Font.SourceSansBold
+	label.Parent = bg
+
+	local hpText = Instance.new("TextLabel")
+	hpText.Size = UDim2.new(1, 0, 0.4, 0)
+	hpText.Position = UDim2.new(0, 0, 0.6, 0)
+	hpText.BackgroundTransparency = 1
+	hpText.TextColor3 = Color3.new(1, 1, 1)
+	hpText.TextStrokeTransparency = 0.4
+	hpText.TextStrokeColor3 = Color3.new(0, 0, 0)
+	hpText.TextScaled = false
+	hpText.TextSize = 12
+	hpText.Font = Enum.Font.SourceSans
+	hpText.Parent = bg
+
+	bg.Parent = ad
+
+	local holder = getESPHolder()
+	local wallOn = espWallRoleAllowed(role)
+	local mode = _G.AA_ChamsMode or "Both"
+	local fill = tonumber(_G.AA_ChamsFill) or 0.6
+	local outline = tonumber(_G.AA_ChamsOutline) or 0.05
+
+	local hl = Instance.new("Highlight")
+	hl.Name = "ESP_Highlight"
+	hl.Adornee = char
+	hl.FillColor = info.color
+	hl.OutlineColor = info.color
+	hl.FillTransparency = fill
+	hl.OutlineTransparency = outline
+	hl.DepthMode = wallOn and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+	hl.Enabled = (mode ~= "BoxHandles")
+	hl.Parent = holder
+
+	local boxes = {}
+	for _, part in ipairs(char:GetChildren()) do
+		if part:IsA("BasePart") and (part.Name == "Head" or part.Name:find("Arm") or part.Name:find("Leg") or part.Name:find("Hand") or part.Name:find("Torso") or part.Name:find("Foot")) then
+			local box
+			if part.Name == "Head" then
+				box = Instance.new("SphereHandleAdornment")
+				box.Radius = 0.75
+			else
+				box = Instance.new("BoxHandleAdornment")
+				box.Size = part.Size
+			end
+			box.Name = "AA_Cham"
+			box.Adornee = part
+			box.AlwaysOnTop = wallOn
+			box.ZIndex = 0
+			box.Transparency = fill
+			box.Color3 = info.color
+			box.Visible = (mode == "BoxHandles" or mode == "Both")
+			box.Parent = holder
+			table.insert(boxes, box)
+		end
+	end
+
+	esp[char] = { bg = bg, hpText = hpText, hl = hl, boxes = boxes, hum = hum, color = info.color, role = role }
+	_G.AA_Stats.esp = _G.AA_Stats.esp + 1
+end
+
+local function bindPlayer(p)
+	if p == LP then return end
+	local function onChar(ch)
+		if ch then task.defer(function() pcall(makeESP, ch, p) end) end
+	end
+	if p.Character then onChar(p.Character) end
+	pcall(function() p.CharacterAdded:Connect(onChar) end)
+	pcall(function()
+		p.CharacterRemoving:Connect(function(ch)
+			if ch then destroyESP(ch) end
+		end)
+	end)
+	pcall(function()
+		p:GetAttributeChangedSignal("Role"):Connect(function()
+			local ch = p.Character
+			if ch and esp[ch] then
+				destroyESP(ch)
+				pcall(makeESP, ch, p)
+			end
+		end)
+	end)
+end
+
+for _, p in ipairs(Players:GetPlayers()) do bindPlayer(p) end
+pcall(function() Players.PlayerAdded:Connect(bindPlayer) end)
+pcall(function()
+	Players.PlayerRemoving:Connect(function(p)
+		if p.Character then destroyESP(p.Character) end
+		pcall(sweepESPOrphans)
+	end)
+end)
+
+local ESP_RESCAN_INTERVAL = 5
+local espRescanClock = 0
+_G.AA_ESPRs = RunService.Heartbeat:Connect(function(dt)
+	local on = _G.AA_ESPOn
+	for char, rec in pairs(esp) do
+		if not on or not (char and char.Parent) then
+			destroyESP(char)
+		else
+			local ok, hp, maxhp = pcall(function() return rec.hum.Health, rec.hum.MaxHealth end)
+			if ok and maxhp and maxhp > 0 then
+				rec.hpText.Text = math.floor(hp) .. " / " .. math.floor(maxhp)
+			end
+		end
+	end
+	if not on then
+		espRescanClock = 0
+		return
+	end
+	espRescanClock = espRescanClock + (dt or 0)
+	if espRescanClock >= ESP_RESCAN_INTERVAL then
+		espRescanClock = 0
+		pcall(sweepESPOrphans)
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p == LP then continue end
+			if p.Character and not esp[p.Character] then
+				task.defer(function() pcall(makeESP, p.Character, p) end)
+			end
+		end
+	end
+end)
+
+_G.AA_ESPCleanup = function()
+	for char in pairs(esp) do destroyESP(char) end
+	esp = {}
+	pcall(sweepESPOrphans)
+end
+
+local function refreshESPVisuals()
+	local mode = _G.AA_ChamsMode or "Both"
+	local fill = tonumber(_G.AA_ChamsFill) or 0.6
+	local outline = tonumber(_G.AA_ChamsOutline) or 0.05
+	for _, rec in pairs(esp) do
+		pcall(function()
+			local wallOn = espWallRoleAllowed(rec.role)
+			rec.bg.AlwaysOnTop = wallOn
+			rec.hl.DepthMode = wallOn and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+			rec.hl.FillTransparency = fill
+			rec.hl.OutlineTransparency = outline
+			rec.hl.Enabled = (mode ~= "BoxHandles")
+			if rec.boxes then
+				for _, b in ipairs(rec.boxes) do
+					b.AlwaysOnTop = wallOn
+					b.Transparency = fill
+					b.Visible = (mode == "BoxHandles" or mode == "Both")
+					b.Color3 = rec.color
+				end
+			end
+		end)
+	end
+end
+_G.AA_RefreshESPVisuals = refreshESPVisuals
+
+local adminFound = {}
+local adminChecked = {}
+local adminResolved = false
+local adminGroupId = 0
+local adminGroupName = ""
+local adminThreshold = 0
+local adminCreatorType = ""
+local adminCreatorId = 0
+local adminKickActive = false
+
+local function adminGetRank(plr, id)
+	for _ = 1, 3 do
+		local ok, res = pcall(function() return plr:GetRankInGroup(id) end)
+		if ok then return tonumber(res) or 0 end
+		task.wait(0.25)
+	end
+	return 0
+end
+
+local function adminGetRoleName(plr, id)
+	for _ = 1, 2 do
+		local ok, res = pcall(function() return plr:GetRoleInGroup(id) end)
+		if ok and type(res) == "string" then return res end
+		task.wait(0.25)
+	end
+	return ""
+end
+
+local function adminIsStaffName(s)
+	local n = string.lower(tostring(s or ""))
+	return n:find("admin") or n:find("moderator") or n:find("mod") or n:find("staff")
+		or n:find("dev") or n:find("owner") or n:find("founder") or n:find("管理")
+		or n:find("运营") or n:find("客服") or n:find("创始") or n:find("super")
+end
+
+local function adminLowestStaffRank(roles)
+	local lowest = math.huge
+	for _, role in ipairs(roles) do
+		if adminIsStaffName(role.Name) then
+			local r = tonumber(role.Rank) or 255
+			if r < lowest then lowest = r end
+		end
+	end
+	return lowest
+end
+
+local function adminResolve()
+	adminGroupId = tonumber(_G.AA_AdminGroupId) or 0
+	adminCreatorType, adminCreatorId = "", 0
+	adminGroupName, adminThreshold = "", 0
+	local ok, info = pcall(function() return MarketplaceService:GetProductInfo(game.PlaceId) end)
+	if ok and type(info) == "table" and type(info.Creator) == "table" then
+		adminCreatorType = tostring(info.Creator.CreatorType or "")
+		adminCreatorId = tonumber(info.Creator.CreatorTargetId) or 0
+		if adminCreatorType:find("Group") then
+			if adminGroupId <= 0 then adminGroupId = adminCreatorId end
+		else
+			local desc = tostring(info.Description or "")
+			local gid = desc:match("roblox%.com/groups/(%d+)")
+			if adminGroupId <= 0 and gid then adminGroupId = tonumber(gid) or 0 end
+		end
+	end
+	if adminGroupId > 0 then
+		local okG, gi = pcall(function() return GroupService:GetGroupInfoAsync(adminGroupId) end)
+		if okG and type(gi) == "table" then
+			adminGroupName = tostring(gi.Name or "")
+			if type(gi.Roles) == "table" then
+				local r = adminLowestStaffRank(gi.Roles)
+				if r < math.huge then adminThreshold = r end
+			end
+		end
+	end
+	local manual = tonumber(_G.AA_AdminMinRank) or 0
+	if manual > 0 then adminThreshold = manual end
+	if adminThreshold > 0 and adminThreshold < 2 then adminThreshold = 2 end
+	adminResolved = true
+end
+
+local function adminBlacklistSet()
+	local set = {}
+	for piece in tostring(_G.AA_AdminBlacklist or ""):gmatch("[^,%s;]+") do
+		set[piece] = true
+	end
+	return set
+end
+
+local function adminMarks(plr)
+	local hits = {}
+	local okA, attrs = pcall(function() return plr:GetAttributes() end)
+	if okA and type(attrs) == "table" then
+		for k, v in pairs(attrs) do
+			local n = string.lower(tostring(k))
+			if n:find("admin") or n:find("moderator") or n:find("staff") or n:find("permission") then
+				if v == true or (type(v) == "number" and v > 0) then
+					table.insert(hits, tostring(k))
+				end
+			end
+		end
+	end
+	pcall(function()
+		for _, key in ipairs({ "Admin", "IsAdmin", "isAdmin", "Moderator", "Staff", "Owner" }) do
+			if plr:FindFirstChild(key) then table.insert(hits, key) end
+		end
+	end)
+	return hits
+end
+
+local function adminCheckPlayer(plr)
+	if plr == LP then return nil end
+	local bl = adminBlacklistSet()
+	if bl[tostring(plr.UserId)] or bl[plr.Name] then return "已知名单" end
+	if not adminCreatorType:find("Group") and adminCreatorId > 0 and plr.UserId == adminCreatorId then
+		return "游戏所有者"
+	end
+	if adminGroupId > 0 then
+		local rank = adminGetRank(plr, adminGroupId)
+		if rank > 0 then
+			local roleName = adminGetRoleName(plr, adminGroupId)
+			if adminIsStaffName(roleName) then
+				return "群组职级 " .. roleName .. " (" .. tostring(rank) .. ")"
+			end
+			if adminThreshold > 0 and rank >= adminThreshold then
+				return "群组排名 " .. tostring(rank) .. " / 阈值 " .. tostring(adminThreshold)
+			end
+		end
+	end
+	if _G.AA_AdminCheckMarks then
+		local marks = adminMarks(plr)
+		if #marks > 0 then return "权限标记 " .. table.concat(marks, ",") end
+	end
+	return nil
+end
+
+local function adminNotify(text)
+	pcall(function()
+		game:GetService("StarterGui"):SetCore("SendNotification", {
+			Title = "权限检测", Text = text, Duration = 10,
+		})
+	end)
+	pcall(function() if _G.AA_AdminNotify then _G.AA_AdminNotify(text) end end)
+end
+
+local function adminScan()
+	if not _G.AA_AdminWatch then return end
+	if not adminResolved then pcall(adminResolve) end
+	local manual = tonumber(_G.AA_AdminMinRank) or 0
+	if manual > 0 then adminThreshold = manual end
+	local snapshot = {}
+	local pending = 0
+	for _, plr in ipairs(Players:GetPlayers()) do table.insert(snapshot, plr) end
+	for _, plr in ipairs(snapshot) do
+		if not adminChecked[plr.UserId] then
+			pending = pending + 1
+			task.spawn(function()
+				local ok, reason = pcall(adminCheckPlayer, plr)
+				if ok then
+					adminChecked[plr.UserId] = true
+					if reason then
+						adminFound[plr.UserId] = { name = plr.Name, id = plr.UserId, reason = reason }
+					end
+				end
+			end)
+		end
+	end
+	if pending > 0 then task.wait(1.2) end
+	local alive = {}
+	for _, plr in ipairs(Players:GetPlayers()) do alive[plr.UserId] = true end
+	for uid in pairs(adminFound) do
+		if not alive[uid] then adminFound[uid] = nil end
+	end
+	local lines = {}
+	for _, info in pairs(adminFound) do
+		table.insert(lines, info.name .. " (" .. tostring(info.id) .. ") · " .. info.reason)
+	end
+	table.sort(lines)
+	_G.AA_AdminList = (#lines > 0) and table.concat(lines, "\n") or "无"
+	_G.AA_AdminState = (#lines > 0) and ("发现 " .. tostring(#lines) .. " 位拥有权限的管理员") or "未发现拥有权限的管理员"
+	_G.AA_AdminPresent = (#lines > 0)
+	_G.AA_AdminGroupInfo = "群组 " .. tostring(adminGroupId) .. " " .. adminGroupName
+		.. " · 职级阈值 " .. tostring(adminThreshold) .. " · 创建者 " .. adminCreatorType .. " " .. tostring(adminCreatorId)
+	if #lines > 0 then
+		if not _G.AA_AdminWarned then
+			_G.AA_AdminWarned = true
+			adminNotify(_G.AA_AdminState .. "\n" .. _G.AA_AdminList)
+		end
+		if _G.AA_AdminAutoKick and not adminKickActive then
+			adminKickActive = true
+			task.spawn(function()
+				local left = math.max(0, tonumber(_G.AA_AdminKickDelay) or 5)
+				while left > 0 do
+					_G.AA_AdminCountdown = math.ceil(left)
+					task.wait(1)
+					if not _G.AA_AdminAutoKick or not _G.AA_AdminWatch or not _G.AA_AdminPresent then
+						_G.AA_AdminCountdown = 0
+						adminKickActive = false
+						return
+					end
+					left = left - 1
+				end
+				_G.AA_AdminCountdown = 0
+				pcall(function() LP:Kick("Session ended") end)
+			end)
+		end
+	else
+		_G.AA_AdminWarned = false
+		_G.AA_AdminCountdown = 0
+	end
+end
+_G.AA_AdminScan = adminScan
+_G.AA_AdminRecheck = function() adminChecked = {} pcall(adminScan) end
+_G.AA_AdminResolve = function() adminResolved = false adminChecked = {} pcall(adminResolve) pcall(adminScan) end
+
+task.spawn(function()
+	task.wait(2)
+	while true do
+		pcall(adminScan)
+		task.wait(5)
+	end
+end)
+
+pcall(function()
+	Players.PlayerAdded:Connect(function(plr)
+		if not _G.AA_AdminWatch then return end
+		task.spawn(function()
+			task.wait(1.5)
+			if not adminResolved then pcall(adminResolve) end
+			local ok, reason = pcall(adminCheckPlayer, plr)
+			if ok and reason then
+				adminFound[plr.UserId] = { name = plr.Name, id = plr.UserId, reason = reason }
+				pcall(adminScan)
+			end
+		end)
+	end)
+end)
+
+pcall(function()
+	Players.PlayerRemoving:Connect(function(plr)
+		adminChecked[plr.UserId] = nil
+		adminFound[plr.UserId] = nil
+	end)
+end)
+
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local okLib, Library = pcall(function()
+	local src = game:HttpGet(repo .. "Library.lua")
+	local fn = loadstring(src)
+	return fn()
+end)
+if not okLib or type(Library) ~= "table" then
+	return "UI 库加载失败"
+end
+
+local ThemeManager, SaveManager
+pcall(function() local a = game:HttpGet(repo .. "addons/ThemeManager.lua"); ThemeManager = loadstring(a)() end)
+pcall(function() local b = game:HttpGet(repo .. "addons/SaveManager.lua"); SaveManager = loadstring(b)() end)
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+getgenv().Toggles = Library.Toggles
+getgenv().Options = Library.Options
+
+local Window = Library:CreateWindow({
+	Title = "Panel · 三阵营",
+	Footer = "v5",
+	Center = true,
+	AutoShow = true,
+})
+
+local Tabs = {
+	Main          = Window:AddTab("主页", "user"),
+	Aim           = Window:AddTab("目标", "target"),
+	Visuals       = Window:AddTab("视觉", "camera"),
+	ESP           = Window:AddTab("信息", "scan"),
+	["UI Settings"] = Window:AddTab("UI设置", "settings"),
+}
+
+local MainBox = Tabs.Main:AddLeftGroupbox("主设置")
+MainBox:AddToggle("AAEnabled", { Text = "启用辅助", Default = _G.AA_Enabled })
+	:AddKeyPicker("AAEnabledKey", { Default = "RightAlt", SyncToggleState = true, Mode = "Toggle" })
+Toggles.AAEnabled:OnChanged(function(Value) _G.AA_Enabled = Value end)
+
+MainBox:AddToggle("AAStamina", { Text = "无限体力", Default = _G.AA_Stamina }):OnChanged(function(Value)
+	_G.AA_Stamina = Value
+	if Value then pcall(applyInfiniteStamina) else pcall(restoreStaminaConfig) end
+end)
+
+local CheckBox = Tabs.Main:AddLeftGroupbox("检测选项")
+CheckBox:AddDropdown("AAChecks", {
+	Text = "检测选项",
+	AllowNull = true,
+	Multi = true,
+	Values = { "仅目标阵营", "严格射线", "严格模式", "增体检测" },
+	Default = { "仅目标阵营" },
+}):OnChanged(function(val)
+	_G.AA_EnemyOnly = val["仅目标阵营"] or false
+	_G.AA_WallCheck = val["严格射线"] or false
+	_G.AA_Strict    = val["严格模式"] or false
+	_G.AA_Aggro     = val["增体检测"] or false
+end)
+
+local MainTabbox = Tabs.Main:AddRightTabbox()
+local StatusTab = MainTabbox:AddTab("运行状态")
+
+local statusLabel = StatusTab:AddLabel("加载中…")
+
+local AimBox = Tabs.Aim:AddLeftGroupbox("辅助")
+AimBox:AddToggle("AAMuzzleAim", { Text = "方向修正", Default = _G.AA_MuzzleAim })
+    :OnChanged(function(Value) _G.AA_MuzzleAim = Value end)
+AimBox:AddDropdown("AAAimMethod", {
+    Text = "修正方式", Values = { "Raycast", "Muzzle", "Both" }, Default = _G.AA_AimMethod,
+}):OnChanged(function(Value) _G.AA_AimMethod = Value end)
+AimBox:AddToggle("AARayHook", { Text = "射线改写", Default = _G.AA_RayHook })
+    :OnChanged(function(Value) _G.AA_RayHook = Value end)
+AimBox:AddToggle("AAForceInclude", { Text = "强制包含目标", Default = _G.AA_ForceInclude })
+    :OnChanged(function(Value) _G.AA_ForceInclude = Value end)
+AimBox:AddSlider("AARayLen", {
+    Text = "射线长度", Default = _G.AA_RayLen, Min = 200, Max = 4000, Rounding = 0,
+}):OnChanged(function(Value) _G.AA_RayLen = Value end)
+AimBox:AddToggle("AARayLenFilter", { Text = "射线长度过滤", Default = _G.AA_RayLenFilter })
+    :OnChanged(function(Value) _G.AA_RayLenFilter = Value end)
+AimBox:AddToggle("AARayCallerFilter", { Text = "调用来源过滤", Default = _G.AA_RayCallerFilter })
+    :OnChanged(function(Value) _G.AA_RayCallerFilter = Value end)
+AimBox:AddToggle("AAExposedOnly", { Text = "仅可见目标 (高级射线)", Default = _G.AA_ExposedOnly })
+    :OnChanged(function(Value) _G.AA_ExposedOnly = Value end)
+AimBox:AddToggle("AAAdvancedRay", { Text = "高级射线", Default = _G.AA_AdvancedRay })
+    :OnChanged(function(Value) _G.AA_AdvancedRay = Value end)
+AimBox:AddToggle("AAIgnoreTransparent", { Text = "忽略透明物", Default = _G.AA_IgnoreTransparent })
+    :OnChanged(function(Value) _G.AA_IgnoreTransparent = Value end)
+AimBox:AddToggle("AAIgnoreSpectator", { Text = "无视旁观者", Default = _G.AA_IgnoreSpectator })
+    :OnChanged(function(Value) _G.AA_IgnoreSpectator = Value end)
+AimBox:AddToggle("AAShieldPierce", { Text = "子弹穿护盾", Default = _G.AA_ShieldPierce })
+    :OnChanged(function(Value) _G.AA_ShieldPierce = Value end)
+AimBox:AddDropdown("AAShieldPierceMode", {
+    Text = "穿盾方式", Values = { "排除护盾", "起点传送" }, Default = _G.AA_ShieldPierceMode,
+}):OnChanged(function(Value) _G.AA_ShieldPierceMode = Value end)
+AimBox:AddToggle("AARayFromMuzzle", { Text = "射线起点:方向", Default = _G.AA_RayFromMuzzle })
+    :OnChanged(function(Value) _G.AA_RayFromMuzzle = Value end)
+
+local ParamBox = Tabs.Aim:AddRightGroupbox("目标参数")
+ParamBox:AddSlider("AAFOV", {
+	Text = "FOV 角度", Default = _G.AA_FOV, Min = 15, Max = 360, Rounding = 0, Suffix = "°",
+}):OnChanged(function(Value) _G.AA_FOV = Value end)
+ParamBox:AddSlider("AAMaxDist", {
+	Text = "最大距离", Default = _G.AA_MaxDist, Min = 50, Max = 2000, Rounding = 0, Suffix = " studs",
+}):OnChanged(function(Value) _G.AA_MaxDist = Value end)
+ParamBox:AddSlider("AAWallPierceDist", {
+	Text = "近距放行距离", Default = _G.AA_WallPierceDist, Min = 0, Max = 10, Rounding = 1, Suffix = " studs",
+}):OnChanged(function(Value) _G.AA_WallPierceDist = Value end)
+ParamBox:AddSlider("AATransparentMaxDist", {
+	Text = "透明穿透距离", Default = _G.AA_TransparentMaxDist, Min = 0, Max = 200, Rounding = 0, Suffix = " studs",
+}):OnChanged(function(Value) _G.AA_TransparentMaxDist = Value end)
+ParamBox:AddDropdown("AAFOVPreset", {
+	Text = "FOV 预设", Values = { "360 全向", "180", "120", "90", "60", "30", "15" }, Default = "360 全向",
+}):OnChanged(function(Value)
+	local n = tonumber((Value:gsub("[^%d]", "")))
+	if n then _G.AA_FOV = n end
+end)
+
+--====================================================================--
+-- [缝合] 自动射击面板 (射击间隔可无级调节)
+--====================================================================--
+local AutoBox = Tabs.Aim:AddRightGroupbox("自动射击 (Shoot)")
+AutoBox:AddToggle("AAAutoFire", { Text = "启用自动射击", Default = _G.AA_AutoFire })
+    :AddKeyPicker("AAAutoFireKey", { Default = "RightShift", SyncToggleState = true, Mode = "Toggle" })
+Toggles.AAAutoFire:OnChanged(function(Value) _G.AA_AutoFire = Value end)
+
+AutoBox:AddToggle("AAAutoFireNeedLock", { Text = "被锁定才开火", Default = _G.AA_AutoFireNeedLock })
+    :OnChanged(function(Value) _G.AA_AutoFireNeedLock = Value end)
+
+AutoBox:AddToggle("AAAutoFirePredict", { Text = "运动预测", Default = _G.AA_AutoFirePredict })
+    :OnChanged(function(Value) _G.AA_AutoFirePredict = Value end)
+
+AutoBox:AddSlider("AAAutoFireLead", {
+    Text = "提前量", Default = _G.AA_AutoFireLead,
+    Min = 0, Max = 0.5, Rounding = 2, Suffix = " s",
+}):OnChanged(function(Value) _G.AA_AutoFireLead = Value end)
+
+AutoBox:AddToggle("AAAutoFirePingComp", { Text = "延迟补偿", Default = _G.AA_AutoFirePingComp })
+    :OnChanged(function(Value) _G.AA_AutoFirePingComp = Value end)
+
+AutoBox:AddSlider("AAAutoFirePingScale", {
+    Text = "补偿系数", Default = _G.AA_AutoFirePingScale,
+    Min = 0, Max = 2, Rounding = 2, Suffix = " x",
+}):OnChanged(function(Value) _G.AA_AutoFirePingScale = Value end)
+
+AutoBox:AddSlider("AAAutoFireSmooth", {
+    Text = "速度平滑", Default = _G.AA_AutoFireSmooth,
+    Min = 0.05, Max = 1, Rounding = 2,
+}):OnChanged(function(Value) _G.AA_AutoFireSmooth = Value end)
+
+AutoBox:AddToggle("AAAutoFirePredMark", { Text = "预测标记", Default = _G.AA_AutoFirePredMark })
+    :OnChanged(function(Value) _G.AA_AutoFirePredMark = Value end)
+
+AutoBox:AddSlider("AAAutoFireRate", {
+    Text = "射击间隔", Default = _G.AA_AutoFireRate,
+    Min = 0, Max = 2, Rounding = 2, Suffix = " 秒/发",
+}):OnChanged(function(Value) _G.AA_AutoFireRate = Value end)
+
+AutoBox:AddDropdown("AAAutoFirePreset", {
+    Text = "间隔预设",
+    Values = { "每帧 (0)", "0.02 s", "0.05 s", "0.1 s", "0.2 s", "0.5 s", "1.0 s" },
+    Default = "每帧 (0)",
+}):OnChanged(function(Value)
+    local n = tonumber((tostring(Value):gsub("[^%d%.]", ""))) or 0
+    _G.AA_AutoFireRate = n
+    pcall(function() Options.AAAutoFireRate:SetValue(n) end)
+end)
+
+AutoBox:AddSlider("AAAutoFireRayLen", {
+    Text = "包内射线长度", Default = _G.AA_AutoFireRayLen,
+    Min = 200, Max = 4000, Rounding = 0, Suffix = " studs",
+}):OnChanged(function(Value) _G.AA_AutoFireRayLen = Value end)
+
+AutoBox:AddDropdown("AAAutoFireEndMode", {
+    Text = "终点模式", Values = { "固定长度", "命中点" }, Default = _G.AA_AutoFireEndMode,
+}):OnChanged(function(Value) _G.AA_AutoFireEndMode = Value end)
+
+AutoBox:AddSlider("AAAutoFireTargets", {
+    Text = "同时目标数", Default = _G.AA_AutoFireTargets, Min = 1, Max = 5, Rounding = 0,
+}):OnChanged(function(Value) _G.AA_AutoFireTargets = math.floor(Value) end)
+
+AutoBox:AddToggle("AAAutoFireTracer", { Text = "绘制弹道", Default = _G.AA_AutoFireTracer })
+    :OnChanged(function(Value) _G.AA_AutoFireTracer = Value end)
+AutoBox:AddToggle("AAAutoFireWallCheck", { Text = "不隔墙射击", Default = _G.AA_AutoFireWallCheck })
+    :OnChanged(function(Value) _G.AA_AutoFireWallCheck = Value end)
+AutoBox:AddToggle("AAAutoFireRelax", { Text = "阵营未识别兜底", Default = _G.AA_AutoFireRelax })
+    :OnChanged(function(Value) _G.AA_AutoFireRelax = Value end)
+AutoBox:AddLabel({ Text = "0 秒 = 每帧(最快)。队伍检测/墙体判定复用本面板；射线长度抓包实测 1000，勿随意改。", DoesWrap = true })
+
+local VisualsBox = Tabs.Visuals:AddLeftGroupbox("FOV 圆环")
+VisualsBox:AddToggle("AAFOVCircle", { Text = "显示 FOV 圆环", Default = _G.AA_FOVCircle })
+	:OnChanged(function(Value) _G.AA_FOVCircle = Value end)
+VisualsBox:AddSlider("AAFOVThickness", {
+	Text = "圆环粗细", Default = _G.AA_FOVThickness, Min = 0.5, Max = 5, Rounding = 1,
+}):OnChanged(function(Value) _G.AA_FOVThickness = Value end)
+VisualsBox:AddSlider("AAFOVTransparency", {
+	Text = "圆环透明度", Default = _G.AA_FOVTransparency, Min = 0, Max = 1, Rounding = 2,
+}):OnChanged(function(Value) _G.AA_FOVTransparency = Value end)
+VisualsBox:AddLabel("圆环颜色"):AddColorPicker("AAFOVColor", {
+	Default = _G.AA_FOVColor, Title = "圆环颜色",
+})
+Options.AAFOVColor:OnChanged(function(Value) _G.AA_FOVColor = Value end)
+
+local TIBox = Tabs.Visuals:AddRightGroupbox("目标指示")
+local islandToggle = TIBox:AddToggle("AAIslandOn", {
+	Text = "灵动岛目标卡", Default = _G.AA_IslandOn,
+})
+islandToggle:OnChanged(function(Value) _G.AA_IslandOn = Value end)
+TIBox:AddToggle("AAIslandFallback", {
+	Text = "锁定失效兜底", Default = _G.AA_IslandFallback,
+}):OnChanged(function(Value) _G.AA_IslandFallback = Value end)
+TIBox:AddDropdown("AAIslandMode", {
+	Text = "显示条件",
+	Values = { "锁定", "视野", "任意" },
+	Default = _G.AA_IslandMode,
+}):OnChanged(function(Value) _G.AA_IslandMode = Value end)
+TIBox:AddButton({ Text = "测试灵动岛", Func = function()
+    pcall(function() if _G.AA_DILib and _G.AA_DILib.Test then _G.AA_DILib.Test() end end)
+end })
+local tiToggle = TIBox:AddToggle("AAShowTarget", {
+	Text = "显示选中目标", Default = _G.AA_ShowTarget,
+})
+pcall(function()
+	tiToggle:AddColorPicker("AATIColor1", { Default = _G.AA_TIColor1, Title = "颜色1" })
+	tiToggle:AddColorPicker("AATIColor2", { Default = _G.AA_TIColor2, Title = "颜色2" })
+end)
+Toggles.AAShowTarget:OnChanged(function(Value) _G.AA_ShowTarget = Value end)
+pcall(function() Options.AATIColor1:OnChanged(function(Value) _G.AA_TIColor1 = Value end) end)
+pcall(function() Options.AATIColor2:OnChanged(function(Value) _G.AA_TIColor2 = Value end) end)
+TIBox:AddDropdown("AATIStyle", {
+	Text = "样式",
+	Values = { "Circle", "Triangle", "Pentagram", "十字准星", "三线准星" },
+	Default = _G.AA_TIStyle,
+}):OnChanged(function(Value) _G.AA_TIStyle = Value end)
+TIBox:AddDropdown("AATIColorMode", {
+	Text = "颜色模式", Values = { "单色", "彩虹", "渐变" }, Default = _G.AA_TIColorMode,
+}):OnChanged(function(Value) _G.AA_TIColorMode = Value end)
+TIBox:AddSlider("AATIColorSpeed", {
+	Text = "变色速度", Default = _G.AA_TIColorSpeed, Min = 0.1, Max = 10, Rounding = 1,
+}):OnChanged(function(Value) _G.AA_TIColorSpeed = Value end)
+TIBox:AddSlider("AATIRadius", {
+	Text = "指示器大小", Default = _G.AA_TIRadius, Min = 5, Max = 80, Rounding = 0,
+}):OnChanged(function(Value) _G.AA_TIRadius = Value end)
+TIBox:AddToggle("AATIGreenOnExposed", {
+	Text = "可见时变色", Default = _G.AA_TIGreenOnExposed,
+}):OnChanged(function(Value) _G.AA_TIGreenOnExposed = Value end)
+TIBox:AddToggle("AATIShowText", {
+	Text = "显示文字", Default = _G.AA_TIShowText,
+}):OnChanged(function(Value) _G.AA_TIShowText = Value end)
+TIBox:AddToggle("AATIBreath", {
+	Text = "呼吸效果", Default = _G.AA_TIBreath,
+}):OnChanged(function(Value) _G.AA_TIBreath = Value end)
+TIBox:AddSlider("AATIBreathSpeed", {
+	Text = "呼吸速度", Default = _G.AA_TIBreathSpeed, Min = 0.1, Max = 5, Rounding = 1,
+}):OnChanged(function(Value) _G.AA_TIBreathSpeed = Value end)
+TIBox:AddSlider("AATIBreathMin", {
+	Text = "呼吸最小比例", Default = _G.AA_TIBreathMin, Min = 0.1, Max = 1, Rounding = 2,
+}):OnChanged(function(Value) _G.AA_TIBreathMin = Value end)
+TIBox:AddSlider("AATIBreathMax", {
+	Text = "呼吸最大比例", Default = _G.AA_TIBreathMax, Min = 1, Max = 3, Rounding = 2,
+}):OnChanged(function(Value) _G.AA_TIBreathMax = Value end)
+TIBox:AddToggle("AATIRotate", {
+	Text = "旋转", Default = _G.AA_TIRotate,
+}):OnChanged(function(Value) _G.AA_TIRotate = Value end)
+TIBox:AddSlider("AATIRotSpeed", {
+	Text = "旋转速度", Default = _G.AA_TIRotSpeed, Min = 0.1, Max = 10, Rounding = 1,
+}):OnChanged(function(Value) _G.AA_TIRotSpeed = Value end)
+TIBox:AddSlider("AATICrosshairLength", {
+	Text = "十字/三线准星长度", Default = _G.AA_TICrosshairLength, Min = 5, Max = 100, Rounding = 0,
+}):OnChanged(function(Value)
+	_G.AA_TICrosshairLength = Value
+	_G.AA_TIThreeLineLength = Value
+end)
+TIBox:AddSlider("AATICrosshairGap", {
+	Text = "十字/三线准星间隙", Default = _G.AA_TICrosshairGap, Min = 0, Max = 50, Rounding = 0,
+}):OnChanged(function(Value)
+	_G.AA_TICrosshairGap = Value
+	_G.AA_TIThreeLineGap = Value
+end)
+
+local ESPBox = Tabs.ESP:AddLeftGroupbox("信息 (本机)")
+ESPBox:AddToggle("AAESPOn", { Text = "启用信息", Default = _G.AA_ESPOn }):OnChanged(function(Value)
+	_G.AA_ESPOn = Value
+	if Value then
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= LP and p.Character then pcall(makeESP, p.Character, p) end
+		end
+	else
+		pcall(function() _G.AA_ESPCleanup() end)
+	end
+end)
+ESPBox:AddToggle("AAESPWall", { Text = "隔墙显示", Default = _G.AA_ESPWall }):OnChanged(function(Value)
+	_G.AA_ESPWall = Value
+	pcall(function() _G.AA_RefreshESPVisuals() end)
+end)
+ESPBox:AddDropdown("AAESPWallRoles", {
+	Text = "可穿墙阵营",
+	Values = { "Police", "Criminal", "Civilian", "Spectator" },
+	Default = (function()
+		local t, r = {}, _G.AA_ESPWallRoles
+		for _, k in ipairs({ "Police", "Criminal", "Civilian", "Spectator" }) do
+			if type(r) ~= "table" or r[k] ~= false then table.insert(t, k) end
+		end
+		return t
+	end)(),
+	Multi = true,
+}):OnChanged(function(Value)
+	local t = {}
+	if type(Value) == "table" then
+		for k, v in pairs(Value) do
+			if type(v) == "string" then t[v] = true
+			elseif v == true then t[k] = true end
+		end
+	end
+	_G.AA_ESPWallRoles = t
+	pcall(function() _G.AA_RefreshESPVisuals() end)
+end)
+ESPBox:AddDropdown("AAChamsMode", {
+	Text = "渲染方式", Values = { "Both", "Highlight", "BoxHandles" }, Default = _G.AA_ChamsMode,
+}):OnChanged(function(Value)
+	_G.AA_ChamsMode = Value
+	pcall(function() _G.AA_RefreshESPVisuals() end)
+end)
+ESPBox:AddSlider("AAChamsFill", {
+	Text = "填充浓度", Default = _G.AA_ChamsFill, Min = 0, Max = 1, Rounding = 2,
+}):OnChanged(function(Value)
+	_G.AA_ChamsFill = Value
+	pcall(function() _G.AA_RefreshESPVisuals() end)
+end)
+ESPBox:AddSlider("AAChamsOutline", {
+	Text = "轮廓透明度", Default = _G.AA_ChamsOutline, Min = 0, Max = 1, Rounding = 2,
+}):OnChanged(function(Value)
+	_G.AA_ChamsOutline = Value
+	pcall(function() _G.AA_RefreshESPVisuals() end)
+end)
+
+local AdminBox = Tabs.ESP:AddRightGroupbox("管理员检测")
+_G.AA_AdminNotify = function(t) pcall(function() Library:Notify(t, 10) end) end
+AdminBox:AddToggle("AAAdminWatch", { Text = "管理员检测", Default = _G.AA_AdminWatch }):OnChanged(function(Value)
+	_G.AA_AdminWatch = Value
+	_G.AA_AdminAutoKick = Value
+	if Value then pcall(function() _G.AA_AdminScan() end) end
+end)
+AdminBox:AddSlider("AAAdminKickDelay", {
+	Text = "管理员检测踢出延迟", Default = _G.AA_AdminKickDelay, Min = 0, Max = 30, Rounding = 0, Suffix = " 秒",
+}):OnChanged(function(Value) _G.AA_AdminKickDelay = Value end)
+local adminInfoLabel = AdminBox:AddLabel({ Text = "检测中…", DoesWrap = true })
+
+local UIBox = Tabs["UI Settings"]:AddLeftGroupbox("界面")
+local watermark
+UIBox:AddToggle("AAWatermark", { Text = "显示水印", Default = false }):OnChanged(function(Value)
+	if Value and Library.AddDraggableLabel and not watermark then
+		pcall(function() watermark = Library:AddDraggableLabel("Panel v5") end)
+	end
+	if watermark and watermark.SetVisible then
+		pcall(function() watermark:SetVisible(Value) end)
+	end
+end)
+
+if ThemeManager and SaveManager then
+	pcall(function()
+		ThemeManager:SetLibrary(Library)
+		SaveManager:SetLibrary(Library)
+		SaveManager:IgnoreThemeSettings()
+		SaveManager:SetIgnoreIndexes({ "AAEnabledKey" })
+		SaveManager:SetFolder("PanelV5/Configs")
+		SaveManager:BuildConfigSection(Tabs["UI Settings"])
+		ThemeManager:ApplyToTab(Tabs["UI Settings"])
+		SaveManager:LoadAutoloadConfig()
+	end)
+end
+
+pcall(function() Library:Notify("已加载", 5) end)
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		pcall(function()
+			statusLabel:SetText((_G.AA_Enabled
+				and (_G.AA_DisplayTarget and ("目标: " .. _G.AA_DisplayTarget.char.Name) or "运行中")
+				or "已关闭")
+				.. "\n" .. (_G.AA_TIReady and "指示器:OK" or "指示器:NA")
+				.. " 显示" .. tostring(_G.AA_ShowTarget)
+				.. " 绘" .. tostring(_G.AA_Stats.tiDraw or 0)
+				.. "\n" .. (_G.AA_HookReady and "Hook:OK" or "Hook:NA")
+				.. " " .. tostring(_G.AA_AimMethod)
+				.. " 射线" .. (_G.AA_RayVerified and _G.AA_RayVerified() and "OK" or "NA")
+				.. " " .. tostring(_G.AA_Stats.hookHits or 0)
+				.. "\n圈 " .. tostring(_G.AA_FOV) .. "° 近距 " .. tostring(_G.AA_WallPierceDist)
+				.. " 遮挡 " .. tostring(_G.AA_Stats.blocked or 0)
+				.. " 盾" .. tostring(_G.AA_Stats.shieldHits or 0)
+				.. " 护" .. tostring(_G.AA_Stats.shieldObjs or 0)
+				.. " 旁" .. tostring(_G.AA_Stats.specPass or 0)
+				.. " 透" .. tostring(_G.AA_Stats.tranPass or 0)
+				.. " 透开" .. (_G.AA_IgnoreTransparent and "OK" or "NA")
+				.. " 枪口" .. (_G.AA_MuzzleFound and "OK" or "NA")
+				.. " 目标" .. (_G.AA_Target and "OK" or "NA")
+				.. " 次" .. tostring(_G.AA_RunCount or 1)
+				.. " 岛" .. (_G.AA_DILib and "OK" or ("NA:" .. tostring(_G.AA_DIErr or "")))
+				.. " 岛开" .. (_G.AA_IslandOn and "OK" or "NA")
+				.. " 显" .. (_G.AA_IslandShown and "OK" or "NA")
+				.. " 锁" .. tostring(_G.AA_IslandLastLock or -1)
+				.. " 式" .. tostring(_G.AA_IslandMode or "?")
+				.. " 岛错" .. tostring(_G.AA_Stats.diErr or 0)
+				.. " 岛父" .. tostring(_G.AA_DIParent or "?")
+				.. " 挂回" .. tostring(_G.AA_Stats.diReattach or 0)
+				.. " 找错" .. tostring((_G.AA_Stats and _G.AA_Stats.findErr) or 0)
+				.. "\n" .. tostring(_G.AA_AdminState or "管理员检测待启动")
+				.. "\n自动射击 " .. (_G.AA_AutoFire and "开" or "关")
+				.. " 锁定 " .. (_G.AA_Target and "有" or "无")
+				.. " " .. (_G.AA_AutoFireNeedLock and "需锁定" or "自由")
+				.. " 间隔 " .. tostring(_G.AA_AutoFireRate) .. "s"
+				.. " 预测 " .. (_G.AA_AutoFirePredict and "开" or "关")
+				.. " 速 " .. tostring((_G.AA_PredDebug and _G.AA_PredDebug.speed) or 0)
+				.. " 提 " .. tostring((_G.AA_PredDebug and _G.AA_PredDebug.lead) or 0)
+				.. " 发包 " .. tostring(_G.AA_Stats.autoFire or 0)
+				.. " 错误 " .. tostring(_G.AA_Stats.autoFireErr or 0)
+				.. " 远程 " .. (_G.AA_GetShoot and _G.AA_GetShoot() and "OK" or "NA"))
+		end)
+		pcall(function()
+			local cd = tonumber(_G.AA_AdminCountdown) or 0
+			adminInfoLabel:SetText(tostring(_G.AA_AdminState or "检测中…")
+				.. (cd > 0 and (" · 退出倒计时 " .. tostring(cd) .. " 秒") or "")
+				.. "\n" .. tostring(_G.AA_AdminList or "—"))
+		end)
+	end
+end)
+
+_G.AA_Toggle       = function() _G.AA_Enabled = not _G.AA_Enabled return _G.AA_Enabled end
+_G.AA_SetStrict    = function(v) _G.AA_Strict = v return _G.AA_Strict end
+_G.AA_SetWall      = function(v) _G.AA_WallCheck = v return _G.AA_WallCheck end
+_G.AA_SetAggro     = function(v) _G.AA_Aggro = v return _G.AA_Aggro end
+_G.AA_SetEnemyOnly = function(v) _G.AA_EnemyOnly = v return _G.AA_EnemyOnly end
+_G.AA_SetFOV       = function(v) _G.AA_FOV = v return _G.AA_FOV end
+_G.AA_SetMaxDist   = function(v) _G.AA_MaxDist = v return _G.AA_MaxDist end
+_G.AA_SetMuzzleAim = function(v) _G.AA_MuzzleAim = v return _G.AA_MuzzleAim end
+_G.AA_SetAimMethod = function(v) _G.AA_AimMethod = v return _G.AA_AimMethod end
+_G.AA_SetRayHook   = function(v) _G.AA_RayHook = v return _G.AA_RayHook end
+_G.AA_SetRayLen    = function(v) _G.AA_RayLen = v return _G.AA_RayLen end
+_G.AA_SetRayLenFilter = function(v) _G.AA_RayLenFilter = v return _G.AA_RayLenFilter end
+_G.AA_SetRayCallerFilter = function(v) _G.AA_RayCallerFilter = v return _G.AA_RayCallerFilter end
+_G.AA_SetForceInclude = function(v) _G.AA_ForceInclude = v return _G.AA_ForceInclude end
+_G.AA_SetStamina   = function(v) _G.AA_Stamina = v if v then pcall(applyInfiniteStamina) else pcall(restoreStaminaConfig) end return _G.AA_Stamina end
+_G.AA_SetESP       = function(v) _G.AA_ESPOn = v return _G.AA_ESPOn end
+_G.AA_SetFOVCircle = function(v) _G.AA_FOVCircle = v return _G.AA_FOVCircle end
+_G.AA_SetExposedOnly       = function(v) _G.AA_ExposedOnly = v return _G.AA_ExposedOnly end
+_G.AA_SetAdvancedRay       = function(v) _G.AA_AdvancedRay = v return _G.AA_AdvancedRay end
+_G.AA_SetIgnoreTransparent = function(v) _G.AA_IgnoreTransparent = v return _G.AA_IgnoreTransparent end
+_G.AA_SetIgnoreSpectator = function(v) _G.AA_IgnoreSpectator = v return _G.AA_IgnoreSpectator end
+_G.AA_SetShieldPierce = function(v) _G.AA_ShieldPierce = v return _G.AA_ShieldPierce end
+_G.AA_SetShieldPierceMode = function(v) _G.AA_ShieldPierceMode = v return _G.AA_ShieldPierceMode end
+_G.AA_SetESPWallRoles = function(v) _G.AA_ESPWallRoles = v pcall(function() _G.AA_RefreshESPVisuals() end) return _G.AA_ESPWallRoles end
+_G.AA_SetRayFromMuzzle     = function(v) _G.AA_RayFromMuzzle = v return _G.AA_RayFromMuzzle end
+_G.AA_SetWallPierceDist   = function(v) _G.AA_WallPierceDist = v return _G.AA_WallPierceDist end
+_G.AA_SetIslandOn = function(v) _G.AA_IslandOn = v return _G.AA_IslandOn end
+_G.AA_SetIslandMode = function(v) _G.AA_IslandMode = v return _G.AA_IslandMode end
+_G.AA_SetTransparentMaxDist = function(v) _G.AA_TransparentMaxDist = v return _G.AA_TransparentMaxDist end
+_G.AA_TestIsland = function() pcall(function() if _G.AA_DILib and _G.AA_DILib.Test then _G.AA_DILib.Test() end end) end
+_G.AA_ForceIsland = function()
+    local ok, r = pcall(function()
+        if not _G.AA_DILib or not _G.AA_DILib.Force then
+            return "no lib | err=" .. tostring(_G.AA_DIErr) .. " | ok=" .. tostring(_G.AA_DIOk)
+        end
+        return _G.AA_DILib.Force()
+    end)
+    return ok and r or ("err:" .. tostring(r))
+end
+_G.AA_SetIslandFallback = function(v) _G.AA_IslandFallback = v return _G.AA_IslandFallback end
+_G.AA_IslandDiag = function()
+    return {
+        lib = _G.AA_DILib ~= nil, ok = _G.AA_DIOk, err = _G.AA_DIErr,
+        parent = _G.AA_DIParent, on = _G.AA_IslandOn, shown = _G.AA_IslandShown,
+        mode = _G.AA_IslandMode, fallback = _G.AA_IslandFallback,
+        frameErr = _G.AA_Stats and _G.AA_Stats.diErr or 0,
+        reattach = _G.AA_Stats and _G.AA_Stats.diReattach or 0,
+        enabled = _G.AA_Enabled, target = _G.AA_Target ~= nil,
+    }
+end
+_G.AA_SetShowTarget = function(v) _G.AA_ShowTarget = v if not v then pcall(hideTargetIndicator) end return _G.AA_ShowTarget end
+_G.AA_SetTIStyle    = function(v) _G.AA_TIStyle = v return _G.AA_TIStyle end
+_G.AA_SetESPWall = function(v) _G.AA_ESPWall = v pcall(function() _G.AA_RefreshESPVisuals() end) return _G.AA_ESPWall end
+_G.AA_SetChamsMode = function(v) _G.AA_ChamsMode = v pcall(function() _G.AA_RefreshESPVisuals() end) return _G.AA_ChamsMode end
+_G.AA_SetAdminWatch = function(v) _G.AA_AdminWatch = v if v then pcall(function() _G.AA_AdminScan() end) end return _G.AA_AdminWatch end
+_G.AA_SetAdminAutoKick = function(v) _G.AA_AdminAutoKick = v return _G.AA_AdminAutoKick end
+_G.AA_SetAdminBlacklist = function(v) _G.AA_AdminBlacklist = v return _G.AA_AdminBlacklist end
+_G.AA_AdminScanOnce = function() pcall(function() _G.AA_AdminResolve() end) pcall(function() _G.AA_AdminScan() end) end
+_G.AA_AdminRecheckOnce = function() pcall(function() _G.AA_AdminRecheck() end) end
+-- [缝合] 自动射击 外部接口
+_G.AA_SetAutoFire        = function(v) _G.AA_AutoFire = v return _G.AA_AutoFire end
+_G.AA_SetAutoFireNeedLock = function(v) _G.AA_AutoFireNeedLock = v return _G.AA_AutoFireNeedLock end
+_G.AA_SetAutoFirePredict  = function(v) _G.AA_AutoFirePredict = v return _G.AA_AutoFirePredict end
+_G.AA_SetAutoFireLead     = function(v) _G.AA_AutoFireLead = v return _G.AA_AutoFireLead end
+_G.AA_SetAutoFirePingComp = function(v) _G.AA_AutoFirePingComp = v return _G.AA_AutoFirePingComp end
+_G.AA_ToggleAutoFire     = function() _G.AA_AutoFire = not _G.AA_AutoFire return _G.AA_AutoFire end
+_G.AA_SetAutoFireRate    = function(v) _G.AA_AutoFireRate = v return _G.AA_AutoFireRate end
+_G.AA_SetAutoFireRayLen  = function(v) _G.AA_AutoFireRayLen = v return _G.AA_AutoFireRayLen end
+_G.AA_SetAutoFireTargets = function(v) _G.AA_AutoFireTargets = v return _G.AA_AutoFireTargets end
+_G.AA_SetAutoFireEndMode = function(v) _G.AA_AutoFireEndMode = v return _G.AA_AutoFireEndMode end
+]==])()
